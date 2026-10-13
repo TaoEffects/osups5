@@ -13,11 +13,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "core/log.h"
@@ -189,16 +191,77 @@ int loadSystemModule(const char *name) {
     return -1;
 }
 
+// Les bibliothèques système exportent leurs fonctions sous un identifiant (NID) :
+// SHA-1 du nom suivi d'un sel fixe, 8 premiers octets en base64 (11 caractères),
+// comme nid_encode() du SDK payload.
+void sha1(const uint8_t *data, size_t len, uint8_t out[20]) {
+    uint32_t h[5] = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0};
+    std::vector<uint8_t> m(data, data + len);
+    m.push_back(0x80);
+    while (m.size() % 64 != 56) m.push_back(0);
+    const uint64_t bits = static_cast<uint64_t>(len) * 8;
+    for (int i = 7; i >= 0; --i) m.push_back(static_cast<uint8_t>(bits >> (i * 8)));
+    auto rol = [](uint32_t v, int n) { return (v << n) | (v >> (32 - n)); };
+    for (size_t off = 0; off < m.size(); off += 64) {
+        uint32_t w[80];
+        for (int i = 0; i < 16; ++i)
+            w[i] = static_cast<uint32_t>(m[off + i * 4]) << 24 | static_cast<uint32_t>(m[off + i * 4 + 1]) << 16 |
+                   static_cast<uint32_t>(m[off + i * 4 + 2]) << 8 | m[off + i * 4 + 3];
+        for (int i = 16; i < 80; ++i) w[i] = rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (int i = 0; i < 80; ++i) {
+            uint32_t f, k;
+            if (i < 20) f = (b & c) | (~b & d), k = 0x5A827999;
+            else if (i < 40) f = b ^ c ^ d, k = 0x6ED9EBA1;
+            else if (i < 60) f = (b & c) | (b & d) | (c & d), k = 0x8F1BBCDC;
+            else f = b ^ c ^ d, k = 0xCA62C1D6;
+            const uint32_t t = rol(a, 5) + f + e + k + w[i];
+            e = d, d = c, c = rol(b, 30), b = a, a = t;
+        }
+        h[0] += a, h[1] += b, h[2] += c, h[3] += d, h[4] += e;
+    }
+    for (int i = 0; i < 20; ++i) out[i] = static_cast<uint8_t>(h[i / 4] >> (24 - (i % 4) * 8));
+}
+
+std::string nidOf(const char *name) {
+    static const uint8_t salt[16] = {0x51, 0x8d, 0x64, 0xa6, 0x35, 0xde, 0xd8, 0xc1,
+                                     0xe6, 0xb0, 0x39, 0xb1, 0xc3, 0xe5, 0x52, 0x30};
+    std::vector<uint8_t> in(name, name + std::strlen(name));
+    in.insert(in.end(), salt, salt + 16);
+    uint8_t d[20];
+    sha1(in.data(), in.size(), d);
+    // Les 8 premiers octets, dans l'ordre inverse (comme le bswap64 du SDK), puis des zéros.
+    uint8_t v[9] = {};
+    for (int i = 0; i < 8; ++i) v[i] = d[7 - i];
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
+    std::string out;
+    for (int i = 0; i < 9 && out.size() < 11; i += 3) {
+        const uint32_t abc = static_cast<uint32_t>(v[i]) << 16 | static_cast<uint32_t>(v[i + 1]) << 8 | v[i + 2];
+        out += b64[(abc >> 18) & 63];
+        out += b64[(abc >> 12) & 63];
+        if (out.size() < 11) out += b64[(abc >> 6) & 63];
+        if (out.size() < 11) out += b64[abc & 63];
+    }
+    return out.substr(0, 11);
+}
+
 template <class F>
 bool resolve(int module, const char *symbol, F &fn) {
-    void *address = nullptr;
-    if (module < 0 || sceKernelDlsym(module, symbol, &address) != 0 || !address) {
-        LOG("ps5: symbole %s introuvable", symbol);
-        fn = nullptr;
-        return false;
+    fn = nullptr;
+    if (module < 0) return false;
+    // Par le nom d'abord, puis par l'identifiant (seul, puis avec les suffixes de bibliothèque).
+    const std::string nid = nidOf(symbol);
+    const std::string tries[] = {symbol, nid, nid + "#A#A", nid + "#B#B"};
+    for (const std::string &name : tries) {
+        void *address = nullptr;
+        if (sceKernelDlsym(module, name.c_str(), &address) == 0 && address) {
+            LOG("ps5: symbole %s trouve (%s)", symbol, name.c_str());
+            fn = reinterpret_cast<F>(address);
+            return true;
+        }
     }
-    fn = reinterpret_cast<F>(address);
-    return true;
+    LOG("ps5: symbole %s introuvable (nid %s)", symbol, nid.c_str());
+    return false;
 }
 
 struct KeyboardApi {
