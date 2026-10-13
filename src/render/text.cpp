@@ -175,6 +175,9 @@ void Font::shutdown() {
 const Font::Glyph *Font::find(unsigned cp) const {
     auto it = glyphs_.find(cp);
     if (it != glyphs_.end()) return &it->second;
+    if (dyn_ && cp >= 0x2000) {
+        if (const Glyph *g = dyn_->get(cp)) return g;
+    }
     it = glyphs_.find('?');
     return it != glyphs_.end() ? &it->second : nullptr;
 }
@@ -221,7 +224,7 @@ float Font::drawSdf(SpriteBatch &batch, float x, float y, float size, uint32_t c
         if (!g) continue;
         pen += kern(prev, g) * k;
         if (g->x1 > g->x0)
-            batch.sdfQuad(atlas_, pen + g->x0 * k, y + g->y0 * k, (g->x1 - g->x0) * k, (g->y1 - g->y0) * k, color, g->u0,
+            batch.sdfQuad(g->tex ? *g->tex : atlas_, pen + g->x0 * k, y + g->y0 * k, (g->x1 - g->x0) * k, (g->y1 - g->y0) * k, color, g->u0,
                           g->v0, g->u1, g->v1, dilate, soft);
         pen += g->advance * k + spacing;
         prev = g;
@@ -229,14 +232,19 @@ float Font::drawSdf(SpriteBatch &batch, float x, float y, float size, uint32_t c
     return width;
 }
 
-void Font::drawGlyphCentered(SpriteBatch &batch, const char *s, float cx, float cy, float size, uint32_t color) const {
+void Font::drawGlyphCentered(SpriteBatch &batch, const char *s, float cx, float cy, float size, uint32_t color, float angle, float sx,
+                             float sy) const {
     if (!loaded() || !s || (color >> 24) == 0) return;
     const unsigned cp = decodeUtf8(s);
     const Glyph *g = find(cp);
     if (!g || g->x1 <= g->x0) return;
     const float k = size / bakePx_;
-    const float w = (g->x1 - g->x0) * k, h = (g->y1 - g->y0) * k;
-    batch.sdfQuad(atlas_, cx - w * 0.5f, cy - h * 0.5f, w, h, color, g->u0, g->v0, g->u1, g->v1, 0, 0);
+    const float w = (g->x1 - g->x0) * k * sx, h = (g->y1 - g->y0) * k * sy;
+    const Texture &atlas = g->tex ? *g->tex : atlas_;
+    if (angle != 0)
+        batch.sdfQuadRotated(atlas, cx, cy, w, h, angle, color, g->u0, g->v0, g->u1, g->v1);
+    else
+        batch.sdfQuad(atlas, cx - w * 0.5f, cy - h * 0.5f, w, h, color, g->u0, g->v0, g->u1, g->v1, 0, 0);
 }
 
 float Font::draw(SpriteBatch &batch, float x, float y, float size, uint32_t color, const char *s, Align align,
@@ -264,6 +272,81 @@ std::string Font::ellipsize(float size, const std::string &text, float maxWidth)
         if (measure(size, candidate.c_str()) <= maxWidth) return candidate;
     }
     return "…";
+}
+
+bool GlyphCache::load(const std::string &path, float bakePx, float hostAscent) {
+    if (!fsu::readFile(path, ttf_, 32u << 20)) {
+        LOG("text: police de secours introuvable: %s", path.c_str());
+        return false;
+    }
+    stbtt_fontinfo info{};
+    if (!stbtt_InitFont(&info, ttf_.data(), stbtt_GetFontOffsetForIndex(ttf_.data(), 0))) return false;
+    info_.resize(sizeof(stbtt_fontinfo));
+    memcpy(info_.data(), &info, sizeof(info));
+    scale_ = stbtt_ScaleForPixelHeight(&info, bakePx);
+    ascent_ = hostAscent;
+    std::vector<uint8_t> zero(static_cast<size_t>(kSize) * kSize, 0);
+    atlas_ = createAlphaTexture(kSize, kSize, zero.data(), true);
+    LOG("text: police de secours %s (%.1f Mo), glyphes à la demande", path.c_str(), ttf_.size() / 1048576.0);
+    return true;
+}
+
+void GlyphCache::shutdown() {
+    destroyTexture(atlas_);
+    glyphs_.clear();
+}
+
+bool GlyphCache::has(unsigned cp) const {
+    if (info_.empty()) return false;
+    const auto *info = reinterpret_cast<const stbtt_fontinfo *>(info_.data());
+    return stbtt_FindGlyphIndex(info, static_cast<int>(cp)) != 0;
+}
+
+const Font::Glyph *GlyphCache::get(unsigned cp) {
+    auto it = glyphs_.find(cp);
+    if (it != glyphs_.end()) return &it->second;
+    if (info_.empty() || !atlas_.id) return nullptr;
+    const auto *info = reinterpret_cast<const stbtt_fontinfo *>(info_.data());
+    const int index = stbtt_FindGlyphIndex(info, static_cast<int>(cp));
+    if (index == 0) return nullptr;
+    Font::Glyph g{};
+    int adv = 0, lsb = 0;
+    stbtt_GetGlyphHMetrics(info, index, &adv, &lsb);
+    g.advance = static_cast<float>(adv) * scale_;
+    g.index = index;
+    g.fallback = true;
+    g.tex = &atlas_;
+    int w = 0, h = 0, xoff = 0, yoff = 0;
+    unsigned char *px = stbtt_GetGlyphSDF(info, scale_, index, kPad, kOnEdge, kDistScale, &w, &h, &xoff, &yoff);
+    g.x0 = static_cast<float>(xoff);
+    g.y0 = static_cast<float>(yoff) + ascent_;
+    g.x1 = g.x0 + static_cast<float>(w);
+    g.y1 = g.y0 + static_cast<float>(h);
+    if (px) {
+        if (penX_ + w + 1 > kSize) {
+            penX_ = 1;
+            penY_ += shelf_ + 1;
+            shelf_ = 0;
+        }
+        if (penY_ + h + 1 > kSize) {
+            // Atlas plein : on repart de zéro (les glyphes seront refaits au besoin).
+            glyphs_.clear();
+            penX_ = penY_ = 1;
+            shelf_ = 0;
+            LOG("text: atlas de secours plein, remis à zéro");
+        }
+        updateAlphaTextureRegion(atlas_, penX_, penY_, w, h, px);
+        g.u0 = static_cast<float>(penX_) / kSize;
+        g.v0 = static_cast<float>(penY_) / kSize;
+        g.u1 = static_cast<float>(penX_ + w) / kSize;
+        g.v1 = static_cast<float>(penY_ + h) / kSize;
+        penX_ += w + 1;
+        shelf_ = std::max(shelf_, h);
+        stbtt_FreeSDF(px, nullptr);
+    } else {
+        g.x1 = g.x0;
+    }
+    return &(glyphs_[cp] = g);
 }
 
 }  // namespace gfx

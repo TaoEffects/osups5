@@ -148,6 +148,8 @@ RemoteSet parseSet(const json::Value &v) {
     s.id = static_cast<int>(v["id"].num());
     s.title = v["title"].str();
     s.artist = v["artist"].str();
+    s.titleUnicode = v["title_unicode"].str();
+    s.artistUnicode = v["artist_unicode"].str();
     s.creator = v["creator"].str();
     s.status = v["status"].str();
     s.bpm = v["bpm"].num();

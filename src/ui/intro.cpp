@@ -20,7 +20,7 @@ public:
 
     void enter() override {
         Context &c = game.ctx;
-        start_ = ms(c);
+        start_ = enterAt_ = ms(c);
         game.backgroundVisible = false;
         game.setBackground(1, 0, 0);
         game.toolbar.shown.snap(0);
@@ -35,6 +35,24 @@ public:
 
     void update(const UiInput &in) override {
         Context &c = game.ctx;
+        // Au lancement, la console renégocie le mode vidéo (120 Hz) : l'écran reste noir
+        // un moment et les premières images sont perdues. On attend que les images
+        // s'enchaînent normalement (45 d'affilée) avant de lancer la séquence.
+        if (!c.settings->introEnabled) {
+            if (!done_) finish();
+            return;
+        }
+        if (waiting_) {
+            stable_ = c.dt > 0 && c.dt < 1.0f / 40 ? stable_ + 1 : 0;
+            const double waited = ms(c) - enterAt_;
+            if ((stable_ >= 45 && waited >= 1200) || waited >= 6000) {
+                waiting_ = false;
+                start_ = ms(c);
+            } else {
+                start_ = ms(c);
+                return;
+            }
+        }
         const double t = ms(c) - start_;
         // Sons de l'intro : petits tics sur les mots, montée sur les icônes.
         const double cues[] = {200, 400, 700, 900, 1450, 1650, 1850, 2080};
@@ -155,8 +173,9 @@ private:
         game.goTo(c.settings->firstRunDone ? game.makeMainMenu() : game.makeFirstRun());
     }
 
-    double start_ = 0;
-    int cue_ = 0;
+    double start_ = 0, enterAt_ = 0;
+    int cue_ = 0, stable_ = 0;
+    bool waiting_ = true;
     bool done_ = false;
 };
 

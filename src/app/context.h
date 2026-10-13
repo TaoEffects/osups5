@@ -44,6 +44,7 @@ struct UiInput {
     bool confirm = false, back = false, options = false, extra = false, extra2 = false;
     bool l1 = false, r1 = false, l2 = false, r2 = false;
     bool anyKey = false;
+    bool touchpadClick = false;  // clic du pavé tactile (recherche)
     // Jeu
     int hitPresses = 0;     // frappes depuis l'image précédente
     bool hitHeld = false;   // au moins une touche de frappe enfoncée

@@ -143,6 +143,12 @@ Texture createAlphaTexture(int width, int height, const uint8_t *alphaPixels, bo
     return t;
 }
 
+void updateAlphaTextureRegion(const Texture &texture, int x, int y, int w, int h, const uint8_t *alpha) {
+    glBindTexture(GL_TEXTURE_2D, texture.id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RED, GL_UNSIGNED_BYTE, alpha);
+}
+
 void updateTexture(const Texture &texture, const uint8_t *rgbaPixels) {
     glBindTexture(GL_TEXTURE_2D, texture.id);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -158,57 +164,6 @@ bool RenderTarget::create(int width, int height) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     if (!ok) LOG("gl: framebuffer %dx%d incomplet", width, height);
     return ok;
-}
-
-bool MsaaTarget::create(int w, int h, int s) {
-    width = w;
-    height = h;
-    samples = s;
-    glGenFramebuffers(1, &fbo);
-    glGenRenderbuffers(1, &color);
-    glBindRenderbuffer(GL_RENDERBUFFER, color);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, s, GL_RGBA8, w, h);
-    // Stencil : masques (contenu découpé dans une forme arrondie ou inclinée).
-    glGenRenderbuffers(1, &stencil);
-    glBindRenderbuffer(GL_RENDERBUFFER, stencil);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, s, GL_DEPTH24_STENCIL8, w, h);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, stencil);
-    const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && glGetError() == GL_NO_ERROR;
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    if (!ok) {
-        // Repli : sans stencil (les masques ne découperont plus, le reste marche).
-        glDeleteRenderbuffers(1, &stencil);
-        stencil = 0;
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
-        const bool ok2 = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && glGetError() == GL_NO_ERROR;
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        if (ok2) {
-            LOG("gl: MSAA x%d %dx%d actif (sans stencil)", s, w, h);
-            return true;
-        }
-        LOG("gl: MSAA x%d %dx%d indisponible", s, w, h);
-        destroy();
-    } else {
-        LOG("gl: MSAA x%d %dx%d actif", s, w, h);
-    }
-    return ok;
-}
-
-void MsaaTarget::destroy() {
-    if (fbo) glDeleteFramebuffers(1, &fbo);
-    if (color) glDeleteRenderbuffers(1, &color);
-    if (stencil) glDeleteRenderbuffers(1, &stencil);
-    fbo = color = stencil = 0;
-}
-
-void MsaaTarget::resolveToScreen() const {
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void RenderTarget::destroy() {
@@ -410,6 +365,17 @@ void SpriteBatch::endMask() {
     flush();
     maskDepth_ = std::max(0, maskDepth_ - 1);
     glDisable(GL_STENCIL_TEST);
+}
+
+void SpriteBatch::sdfQuadRotated(const Texture &tex, float cx, float cy, float w, float h, float angle, uint32_t color, float u0,
+                                 float v0, float u1, float v1) {
+    const float c = std::cos(angle), s = std::sin(angle);
+    const float px[4] = {-w / 2, w / 2, w / 2, -w / 2}, py[4] = {-h / 2, -h / 2, h / 2, h / 2};
+    const float uu[4] = {u0, u1, u1, u0}, vv[4] = {v0, v0, v1, v1};
+    Vertex v[4];
+    for (int i = 0; i < 4; ++i)
+        v[i] = Vertex{cx + px[i] * c - py[i] * s, cy + px[i] * s + py[i] * c, uu[i], vv[i], color, 0, 0, 0, 0, 0, 0, 0, 3};
+    push(tex, v);
 }
 
 void SpriteBatch::arc(float cx, float cy, float radius, float thickness, float from, float to, const Corners &col) {

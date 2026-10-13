@@ -6,6 +6,7 @@
 //  - « jouer » : les boutons se replient, tout glisse à gauche et le logo part
 //    rejoindre le pied de page de la sélection de map.
 // Dimensions et durées reprises du code de lazer (en unités u).
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -28,14 +29,18 @@ struct MenuButton {
     bool left;  // à gauche du logo (Options)
     ButtonFx fx;
     Tween width{0}, contentAlpha{0};
-    Tween iconY{0}, iconScale{1};
+    Tween iconY{0}, iconScale{1}, iconScaleY{1}, iconRot{0};
     long lastBeat = -1;
     int beatSide = 1;
 };
 
-constexpr float kBtnW = 140 * U, kBtnH = 100 * U, kWedge = 20 * U;
+#define kBtnW (140 * U)
+#define kBtnH (100 * U)
+#define kWedge (20 * U)
 // Centre du logo en état haut niveau : 228 u à gauche du centre de l'écran.
-constexpr float kLogoX = kVW / 2 - 228 * U;
+// Le groupe (Options | logo | Jouer, Télécharger, Quitter) va de L-234,7 u à
+// L+474,7 u : on place le logo pour que l'ensemble soit centré à l'écran.
+#define kLogoX (kVW / 2 - 120 * U)
 
 const char *const kTips[] = {
     "Carré (ou F1) ouvre les mods dans la sélection de map.",
@@ -55,10 +60,10 @@ public:
     void enter() override {
         Context &c = game.ctx;
         const double t = ms(c);
-        buttons_[0] = {"Options", fa::gear, hex(0x555555), true, {}, {}, {}, {}, {1}, -1, 1};
-        buttons_[1] = {"Jouer", fa::play, hex(0x6644cc), false, {}, {}, {}, {}, {1}, -1, 1};
-        buttons_[2] = {"Télécharger", fa::download, hex(0xa5cc00), false, {}, {}, {}, {}, {1}, -1, 1};
-        buttons_[3] = {"Quitter", fa::door_open, hex(0xee3399), false, {}, {}, {}, {}, {1}, -1, 1};
+        buttons_[0] = {"Options", fa::gear, hex(0x555555), true, {}, {}, {}, {}, {1}, {1}, {0}, -1, 1};
+        buttons_[1] = {"Jouer", fa::play, hex(0x6644cc), false, {}, {}, {}, {}, {1}, {1}, {0}, -1, 1};
+        buttons_[2] = {"Télécharger", fa::download, hex(0xa5cc00), false, {}, {}, {}, {}, {1}, {1}, {0}, -1, 1};
+        buttons_[3] = {"Quitter", fa::door_open, hex(0xee3399), false, {}, {}, {}, {}, {1}, {1}, {0}, -1, 1};
         game.logo.interactive = true;
         game.backgroundParallax = 1;
         screenAlpha_.fromTo(t, forward ? 0 : 1, 1, forward ? 500 : 300, Ease::OutQuint);
@@ -130,9 +135,18 @@ public:
                 b.fx.hovered = h;
                 b.width.go(t, h ? 1.5f : 1.0f, 500, Ease::OutElastic);
                 if (!h) {
+                    // Survol perdu : tout revient en place (lazer : 500 ms / 200 ms, Out).
                     b.iconY.go(t, 0, 500, Ease::Out);
+                    b.iconRot.go(t, 0, 500, Ease::Out);
                     b.iconScale.go(t, 1, 200, Ease::Out);
+                    b.iconScaleY.go(t, 1, 200, Ease::Out);
                 } else {
+                    // Survol : l'icône s'incline jusqu'au prochain temps et s'étire (1,2 x 1,08).
+                    const double untilBeat = c.trackRunning ? std::max(50.0, (1 - c.beatProgress) * c.beatLength) : 300;
+                    b.iconRot.go(t, b.beatSide * 8 * anim::kPi / 180, untilBeat, Ease::InOutSine);
+                    b.iconScale.go(t, 1.2f, 200, Ease::Out);
+                    b.iconScaleY.go(t, 1.08f, 200, Ease::Out);
+                    b.lastBeat = c.beatIndexEarly;
                     c.play(c.sfx->uiHover, 0.6f);
                 }
             }
@@ -141,10 +155,15 @@ public:
                 b.lastBeat = c.beatIndexEarly;
                 const double d = c.beatLength / 2;
                 b.beatSide = -b.beatSide;
-                b.iconY.fromTo(t, 0, -10 * U, d, Ease::Out);
-                b.iconY.go(t, 0, d, Ease::In, d);
-                b.iconScale.fromTo(t, 1.08f, 1.2f, d, Ease::Out);
-                b.iconScale.go(t, 1.08f, d, Ease::In, d);
+                // À chaque temps : bascule de ±8° (2d, InOutSine), saut de 10 u puis retour,
+                // étirement 1,2 au sommet puis 1,2 x 1,08 (comme MainMenuButton de lazer).
+                b.iconRot.go(t, b.beatSide * 8 * anim::kPi / 180, 2 * d, Ease::InOutSine);
+                b.iconY.fromTo(t, b.iconY.at(t), -10 * U, d, Ease::Out);
+                b.iconY.then(0, d, Ease::In);
+                b.iconScale.fromTo(t, b.iconScale.at(t), 1.2f, d, Ease::Out);
+                b.iconScale.then(1.2f, d, Ease::In);
+                b.iconScaleY.fromTo(t, b.iconScaleY.at(t), 1.2f, d, Ease::Out);
+                b.iconScaleY.then(1.08f, d, Ease::In);
             }
             b.fx.setPressed(c, h && in.raw && (in.raw->mouse.buttons & 1u));
         }
@@ -172,8 +191,9 @@ public:
             b.rect(0, kVH / 2 - kBtnH / 2 * sy, kVW, kBtnH * sy, alpha(hex(0x323232), strip));
         // Parallaxe des boutons (0,01).
         const UiInput &in = game.input();
-        const float px = in.mouseActive ? -(in.mouseX - kVW / 2) * 0.01f : 0;
-        const float py = in.mouseActive ? -(in.mouseY - kVH / 2) * 0.01f : 0;
+        const bool para = in.mouseActive && c.settings->menuParallax;
+        const float px = para ? -(in.mouseX - kVW / 2) * 0.01f : 0;
+        const float py = para ? -(in.mouseY - kVH / 2) * 0.01f : 0;
         b.pushTransform(slide_.at(t) + px, py);
         // Les boutons de gauche sont dessinés au-dessus de ceux de droite (ordre inverse).
         for (int i = 3; i >= 0; --i) drawButton(i);
@@ -239,17 +259,19 @@ private:
             b.roundRect(r.x, r.y, r.w, r.h, 0, alpha(col::white, std::max(pr, fl)), kShear);
             b.setBlend(gfx::Blend::Alpha);
         }
-        // Contenu centré dans la partie hors marge (la marge du 1er bouton est côté logo).
-        float cx = r.x + r.w / 2;
-        if (i == 0) cx -= kWedge * 0.5f * rel;
-        if (i == 1) cx += kWedge * 0.5f * rel;
-        const float iy = r.y + 42 * U + m.iconY.at(t);
-        const float is = 32 * U * m.iconScale.at(t);
-        icon(c, m.glyph, cx - kShear * (iy - (r.y + r.h / 2)), iy, is, alpha(col::white, ca));
+        // Contenu centré sur la partie visible du bouton (le logo en cache un bout),
+        // icône et libellé alignés sur le même axe vertical.
+        float left = r.x, right = r.x + r.w;
+        const float logoR = game.logo.radius(c), logoX = game.logo.cx(c);
+        if (i == 0) right = std::min(right, logoX - logoR);
+        if (i == 1) left = std::max(left, logoX + logoR);
+        const float cx = (left + right) / 2;
+        const float iy = r.y + 40 * U + m.iconY.at(t);
+        icon(c, m.glyph, cx, iy, 32 * U, alpha(col::white, ca), m.iconRot.at(t), m.iconScale.at(t), m.iconScaleY.at(t));
         const float ts = 16 * U;
         const float lc = r.y + r.h - 7 * U - ts * 0.4f;  // centre des capitales du libellé
-        c.fonts->semibold.drawShadow(b, cx - kShear * (lc - (r.y + r.h / 2)), c.fonts->semibold.topForCenter(lc, ts), ts,
-                                     alpha(col::white, ca), m.label, gfx::Align::Center);
+        c.fonts->semibold.drawShadow(b, cx, c.fonts->semibold.topForCenter(lc, ts), ts, alpha(col::white, ca), m.label,
+                                     gfx::Align::Center);
         b.popTransform();
     }
 
@@ -366,8 +388,8 @@ private:
         else if (dt < 4800) a = 1 - static_cast<float>((dt - 4000) / 800);
         if (a <= 0 || state_ == State::Exit) return;
         const float right = kVW - 15 * U, top = game.toolbar.bottom(c) + 5 * U;
-        const std::string title = s->titleUnicode.empty() ? s->title : s->titleUnicode;
-        const std::string artist = s->artistUnicode.empty() ? s->artist : s->artistUnicode;
+        const std::string title = s->shownTitle(c.settings->originalMetadata);
+        const std::string artist = s->shownArtist(c.settings->originalMetadata);
         c.batch->shadow(right - 420 * U, top, 420 * U, 50 * U, 30 * U, 40 * U, gfx::rgba(10, 10, 10, static_cast<uint8_t>(60 * a)));
         text(c, c.fonts->light, right, top, 24 * U, alpha(col::white, a), title, gfx::Align::Right, 600 * U, true);
         text(c, c.fonts->regular, right, top + 27 * U, 16 * U, alpha(col::white, a), artist, gfx::Align::Right, 600 * U, true);
@@ -392,9 +414,12 @@ private:
         const float x = kVW / 2 - w / 2, y = kVH - 20 * U - h;
         b.pushScaleAround(kVW / 2, y + h / 2, sc, a);
         b.roundRect(x, y, w, h, 10 * U, alpha(hex(0x171a1c), 0.75f));
-        icon(c, fa::lightbulb, x + 10 * U + 8 * U, y + 10 * U + ts * 0.5f, 16 * U, col::pink0);
-        c.fonts->semibold.drawMid(b, x + 10 * U + 24 * U, y + 10 * U + ts * 0.5f, ts, col::pink0, "Astuce");
-        text(c, c.fonts->regular, x + 10 * U, y + 10 * U + ts + 8 * U, ts, col::white, tip, gfx::Align::Left, w - 20 * U);
+        // Titre et astuce centrés dans la boîte.
+        const float hw = c.fonts->semibold.measure(ts, "Astuce") + 24 * U;
+        icon(c, fa::lightbulb, kVW / 2 - hw / 2 + 8 * U, y + 10 * U + ts * 0.5f, 16 * U, col::pink0);
+        c.fonts->semibold.drawMid(b, kVW / 2 - hw / 2 + 24 * U, y + 10 * U + ts * 0.5f, ts, col::pink0, "Astuce");
+        text(c, c.fonts->regular, kVW / 2, c.fonts->regular.topForCenter(y + 10 * U + ts * 1.5f + 8 * U, ts), ts, col::white, tip,
+             gfx::Align::Center, w - 20 * U);
         b.popTransform();
     }
 

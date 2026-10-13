@@ -16,6 +16,7 @@ float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : 
 bool Settings::load(const std::string &path) {
     std::string text;
     if (!fsu::readText(path, text, 1 << 20)) return false;
+    version = 0;  // un fichier sans version date d'avant les migrations
     size_t pos = 0;
     while (pos < text.size()) {
         size_t end = text.find('\n', pos);
@@ -46,21 +47,73 @@ bool Settings::load(const std::string &path) {
         else if (key == "first_run_done") firstRunDone = i != 0;
         else if (key == "skin") skin = i >= 0 && i <= 2 ? i : 0;
         else if (key == "skin_name") skinName = value;
-        else if (key == "msaa") msaa = i != 0;
+        else if (key == "version") version = i;
+        else if (key == "key_hit1") keyHit1 = i;
+        else if (key == "key_hit2") keyHit2 = i;
+        else if (key == "pad_hit_mask") padHitMask = static_cast<unsigned>(strtoul(value.c_str(), nullptr, 10));
+        else if (key == "mouse_buttons_in_game") mouseButtonsInGame = i != 0;
+        else if (key == "cursor_size") cursorSize = clampf(f, 0.5f, 2.0f);
+        else if (key == "cursor_trail") cursorTrail = i != 0;
+        else if (key == "show_hud") showHud = i != 0;
+        else if (key == "blur_in_game") blurInGame = i != 0;
+        else if (key == "menu_parallax") menuParallax = i != 0;
+        else if (key == "intro") introEnabled = i != 0;
+        else if (key == "original_metadata") originalMetadata = i != 0;
+        else if (key == "ui_scale") uiScale = clampf(f, 0.8f, 1.3f);
+        else if (key == "input_mode") inputMode = i >= 0 && i <= 2 ? i : 0;
+        else if (key == "ui_theme") uiTheme = 0;
+    }
+    // Version 2 : 120 Hz et style « triangles » par défaut pour tout le monde.
+    if (version < 2) {
+        refreshHz = 120;
+        if (skin == 0) skin = 1;
+        version = 2;
     }
     LOG("settings: charges depuis %s (refresh %d Hz)", path.c_str(), refreshHz);
     return true;
 }
 
 bool Settings::save(const std::string &path) const {
-    char buf[2048];
-    const int n = snprintf(buf, sizeof(buf),
-                           "refresh_hz=%d\nbackground_dim=%.2f\nshow_debug=%d\nhit_error_bar=%d\nmaster_volume=%.2f\n"
-                           "music_volume=%.2f\neffects_volume=%.2f\noffset_ms=%d\ncursor_speed=%.0f\ncursor_curve=%.2f\n"
-                           "touchpad_absolute=%d\nlast_set=%s\nlast_difficulty=%d\nmirror=%s\nfirst_run_done=%d\nskin=%d\nmsaa=%d\nskin_name=%s\n",
-                           refreshHz, backgroundDim, showDebug, showHitErrorBar, masterVolume, musicVolume,
-                           effectsVolume, offsetMs, cursorSpeed, cursorCurve, touchpadAbsolute, lastSetFolder.c_str(),
-                           lastDifficulty, mirror.c_str(), firstRunDone, skin, msaa, skinName.c_str());
-    if (n <= 0 || n >= static_cast<int>(sizeof(buf))) return false;
-    return fsu::writeFileAtomic(path, buf, static_cast<size_t>(n));
+    std::string out;
+    char line[512];
+    auto put = [&](const char *key, const char *fmt, auto value) {
+        snprintf(line, sizeof(line), "%s=", key);
+        out += line;
+        snprintf(line, sizeof(line), fmt, value);
+        out += line;
+        out += "\n";
+    };
+    put("version", "%d", version);
+    put("refresh_hz", "%d", refreshHz);
+    put("background_dim", "%.2f", static_cast<double>(backgroundDim));
+    put("show_debug", "%d", showDebug ? 1 : 0);
+    put("hit_error_bar", "%d", showHitErrorBar ? 1 : 0);
+    put("master_volume", "%.2f", static_cast<double>(masterVolume));
+    put("music_volume", "%.2f", static_cast<double>(musicVolume));
+    put("effects_volume", "%.2f", static_cast<double>(effectsVolume));
+    put("offset_ms", "%d", offsetMs);
+    put("cursor_speed", "%.0f", static_cast<double>(cursorSpeed));
+    put("cursor_curve", "%.2f", static_cast<double>(cursorCurve));
+    put("touchpad_absolute", "%d", touchpadAbsolute ? 1 : 0);
+    put("last_set", "%s", lastSetFolder.c_str());
+    put("last_difficulty", "%d", lastDifficulty);
+    put("mirror", "%s", mirror.c_str());
+    put("first_run_done", "%d", firstRunDone ? 1 : 0);
+    put("skin", "%d", skin);
+    put("skin_name", "%s", skinName.c_str());
+    put("key_hit1", "%d", keyHit1);
+    put("key_hit2", "%d", keyHit2);
+    put("pad_hit_mask", "%u", padHitMask);
+    put("mouse_buttons_in_game", "%d", mouseButtonsInGame ? 1 : 0);
+    put("cursor_size", "%.2f", static_cast<double>(cursorSize));
+    put("cursor_trail", "%d", cursorTrail ? 1 : 0);
+    put("show_hud", "%d", showHud ? 1 : 0);
+    put("blur_in_game", "%d", blurInGame ? 1 : 0);
+    put("menu_parallax", "%d", menuParallax ? 1 : 0);
+    put("intro", "%d", introEnabled ? 1 : 0);
+    put("original_metadata", "%d", originalMetadata ? 1 : 0);
+    put("ui_scale", "%.2f", static_cast<double>(uiScale));
+    put("input_mode", "%d", inputMode);
+    put("ui_theme", "%d", uiTheme);
+    return fsu::writeFileAtomic(path, out.data(), out.size());
 }

@@ -126,9 +126,9 @@ uint32_t modTypeColor(int type) {
     }
 }
 
-void icon(Context &c, const char *glyph, float cx, float cy, float size, uint32_t color) {
+void icon(Context &c, const char *glyph, float cx, float cy, float size, uint32_t color, float angle, float sx, float sy) {
     // Centrage sur la boîte réelle de l'icône (les icônes n'ont pas toutes la même forme).
-    c.fonts->icons.drawGlyphCentered(*c.batch, glyph, cx, cy, size, color);
+    c.fonts->icons.drawGlyphCentered(*c.batch, glyph, cx, cy, size, color, angle, sx, sy);
 }
 
 void spinner(Context &c, float cx, float cy, float size, float a) {
@@ -422,7 +422,7 @@ void Logo::draw(Context &c) {
     gfx::SpriteBatch &b = *c.batch;
     const float s = scale.at(t) * hoverScale.at(t) * bounce.at(t) * beatScale_.at(t) * ampScale_;
     const float px = cx(c), py = cy(c);
-    const float D = kSize * s;     // disque visible
+    const float D = size() * s;     // disque visible
     const float R = D * 0.5f;
     const float full = 256 * U * s;  // rayon du sprite complet (512 u)
 
@@ -487,7 +487,7 @@ void SideFlashes::update(Context &c) {
     const float a = std::clamp(0.1f + (c.amplitude - 0.25f) / m, 0.1f, 1.0f);
     auto flashSide = [&](Tween &tw) {
         tw.fromTo(t, tw.at(t), a, 65, Ease::None);
-        tw.go(t, 0, c.beatLength, Ease::In, 65);
+        tw.then(0, c.beatLength, Ease::In);
     };
     if (c.kiai) {
         flashSide(c.beatIndexEarly % 2 == 0 ? left_ : right_);
@@ -520,10 +520,10 @@ void Toolbar::show(const Context &c, bool s) {
 Toolbar::Action Toolbar::update(Context &c, const UiInput &in) {
     const double t = ms(c);
     if (shown.at(t) < 0.9f) return None;
-    const float y = bottom(c) - kHeight;
+    const float y = bottom(c) - height();
     hovered_ = -1;
     for (int i = 0; i < 4; ++i) {
-        const bool h = in.hover(bx_[i], y, kHeight, kHeight);
+        const bool h = in.hover(bx_[i], y, height(), height());
         if (h) hovered_ = i;
         fx_[i].setHover(c, h, 300, 200);
         if (h && in.mouseClick) {
@@ -540,31 +540,31 @@ void Toolbar::draw(Context &c) {
     const float sh = shown.at(t);
     if (sh <= 0.001f) return;
     gfx::SpriteBatch &b = *c.batch;
-    const float y = -(1 - sh) * kHeight;
+    const float y = -(1 - sh) * height();
     b.pushAlpha(std::min(1.0f, sh * 3));
-    b.rect(0, y, kVW, kHeight, hex(0x1a1a1a));
+    b.rect(0, y, kVW, height(), hex(0x1a1a1a));
     bx_[0] = 0;
-    bx_[1] = kHeight;
-    bx_[2] = kVW - kHeight * 2 - 120 * U;
-    bx_[3] = kVW - kHeight - 120 * U;
+    bx_[1] = height();
+    bx_[2] = kVW - height() * 2 - 120 * U;
+    bx_[3] = kVW - height() - 120 * U;
     const char *glyphs[4] = {fa::gear, fa::house, fa::download, fa::music};
     const char *tips[4] = {"Options", "Accueil", "Télécharger des maps", "Musique"};
     for (int i = 0; i < 4; ++i) {
         const float hv = fx_[i].hover.at(t), fl = fx_[i].flash.at(t);
         if (hv > 0 || fl > 0) {
             b.setBlend(gfx::Blend::Additive);
-            b.roundRect(bx_[i] + 3 * U, y + 3 * U, kHeight - 6 * U, kHeight - 6 * U, 6 * U,
+            b.roundRect(bx_[i] + 3 * U, y + 3 * U, height() - 6 * U, height() - 6 * U, 6 * U,
                         alpha(hex(0x505050), hv * 180.0f / 255 + fl));
             b.setBlend(gfx::Blend::Alpha);
         }
-        icon(c, glyphs[i], bx_[i] + kHeight / 2, y + kHeight / 2, 20 * U, col::white);
+        icon(c, glyphs[i], bx_[i] + height() / 2, y + height() / 2, 20 * U, col::white);
         if (hv > 0.01f) {
             const float ts = 15 * U;
             const float tw = c.fonts->bold.measure(ts, tips[i]);
-            float tx = bx_[i] + kHeight / 2 - tw / 2;
+            float tx = bx_[i] + height() / 2 - tw / 2;
             tx = std::clamp(tx, 8.0f, kVW - tw - 8);
-            b.roundRect(tx - 8, y + kHeight + 6, tw + 16, ts + 14, 6, alpha(gfx::rgba(0, 0, 0, 200), hv));
-            c.fonts->bold.drawMid(b, tx, y + kHeight + 6 + (ts + 14) / 2, ts, alpha(col::white, hv), tips[i]);
+            b.roundRect(tx - 8, y + height() + 6, tw + 16, ts + 14, 6, alpha(gfx::rgba(0, 0, 0, 200), hv));
+            c.fonts->bold.drawMid(b, tx, y + height() + 6 + (ts + 14) / 2, ts, alpha(col::white, hv), tips[i]);
         }
     }
 #if !defined(__PROSPERO__)
@@ -574,7 +574,7 @@ void Toolbar::draw(Context &c) {
     localtime_r(&now, &lt);
     char buf[16];
     snprintf(buf, sizeof(buf), "%02d:%02d", lt.tm_hour, lt.tm_min);
-    c.fonts->semibold.drawMid(b, kVW - 20 * U, y + kHeight / 2, 18 * U, col::white, buf, gfx::Align::Right);
+    c.fonts->semibold.drawMid(b, kVW - 20 * U, y + height() / 2, 18 * U, col::white, buf, gfx::Align::Right);
 #endif
     b.popTransform();
 }
@@ -585,6 +585,40 @@ float text(Context &c, const gfx::Font &f, float x, float y, float size, uint32_
            float maxW, bool shadow) {
     const std::string str = maxW > 0 ? f.ellipsize(size, s, maxW) : s;
     return shadow ? f.drawShadow(*c.batch, x, y, size, color, str.c_str(), a) : f.draw(*c.batch, x, y, size, color, str.c_str(), a);
+}
+
+float paragraph(Context &c, const gfx::Font &f, float x, float y, float width, float size, uint32_t color, const std::string &s,
+                gfx::Align a, float lineHeight) {
+    std::string line, word;
+    float yy = y;
+    auto flush = [&]() {
+        if (!line.empty()) f.draw(*c.batch, x, yy, size, color, line.c_str(), a);
+        yy += size * lineHeight;
+        line.clear();
+    };
+    const std::string text = s + " ";
+    for (char ch : text) {
+        if (ch == '\n') {
+            if (!word.empty()) line = line.empty() ? word : line + " " + word;
+            word.clear();
+            flush();
+            continue;
+        }
+        if (ch != ' ') {
+            word += ch;
+            continue;
+        }
+        const std::string candidate = line.empty() ? word : line + " " + word;
+        if (!line.empty() && f.measure(size, candidate.c_str()) > width) {
+            flush();
+            line = word;
+        } else {
+            line = candidate;
+        }
+        word.clear();
+    }
+    if (!line.empty()) flush();
+    return yy - y;
 }
 
 void cursor(Context &c, float x, float y, bool pressed) {

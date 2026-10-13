@@ -31,21 +31,13 @@ struct Texture {
 Texture createTexture(int width, int height, const uint8_t *rgbaPixels, bool linearFilter);
 // Texture 1 canal lue comme (1, 1, 1, alpha) : police, masques. 4x moins de mémoire.
 Texture createAlphaTexture(int width, int height, const uint8_t *alphaPixels, bool linearFilter);
+// Met à jour une zone d'une texture 1 canal.
+void updateAlphaTextureRegion(const Texture &texture, int x, int y, int w, int h, const uint8_t *alpha);
 // Remplace le contenu (même taille, RGBA).
 void updateTexture(const Texture &texture, const uint8_t *rgbaPixels);
 
 // Premultiplied : pour composer une cible de rendu (couleur déjà multipliée par alpha).
 enum class Blend : uint8_t { Alpha, Additive, Premultiplied };
-
-// Cible multiéchantillonnée (MSAA) : on dessine toute l'image dedans, puis on la
-// "résout" vers l'écran. Supprime l'aliasing des bords (quads inclinés, traits...).
-struct MsaaTarget {
-    GLuint fbo = 0, color = 0, stencil = 0;
-    int width = 0, height = 0, samples = 0;
-    bool create(int width, int height, int samples);
-    void destroy();
-    void resolveToScreen() const;
-};
 
 // Cible de rendu hors écran (texture couleur RGBA).
 struct RenderTarget {
@@ -125,6 +117,8 @@ public:
     void beginMask();
     void useMask();
     void endMask();
+    void sdfQuadRotated(const Texture &tex, float cx, float cy, float w, float h, float angle, uint32_t color, float u0, float v0,
+                        float u1, float v1);
     void shape(float mode, float cx, float cy, float hw, float hh, float radius, float border, float soft,
                const Corners &colors, float shear = 0, float angle = 0);
 

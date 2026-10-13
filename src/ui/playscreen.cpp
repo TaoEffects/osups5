@@ -103,8 +103,8 @@ public:
             const float ma = metaA_.at(t);
             b.pushAlpha(ma);
             float y = facadeY() + 36 * U + 15 * U;
-            const std::string title = set->titleUnicode.empty() ? set->title : set->titleUnicode;
-            const std::string artist = set->artistUnicode.empty() ? set->artist : set->artistUnicode;
+            const std::string title = set->shownTitle(c.settings->originalMetadata);
+            const std::string artist = set->shownArtist(c.settings->originalMetadata);
             text(c, c.fonts->semibold, kVW / 2, y, 36 * U, col::white, title, gfx::Align::Center, kVW * 0.8f, true);
             y += 36 * U + 6 * U;
             text(c, c.fonts->regular, kVW / 2, y, 26 * U, col::white, artist, gfx::Align::Center, kVW * 0.8f, true);
@@ -210,7 +210,7 @@ public:
         const double t = ms(c);
         game.toolbar.show(c, false);
         game.logo.opacity.snap(0);
-        game.setBackground(c.settings->backgroundDim, 0, 800, Ease::OutQuint);
+        game.setBackground(c.settings->backgroundDim, c.settings->blurInGame ? 1 : 0, 800, Ease::OutQuint);
         game.backgroundParallax = 0;
         fade_.fromTo(t, 0, 1, 400, Ease::OutQuint);
         game::Beatmap map = game.preparedMap;
@@ -480,10 +480,10 @@ public:
         const game::DiffInfo *diff = game.currentDiff();
         float y = py + 53 * U + split + 12 * U;
         if (set) {
-            text(c, c.fonts->semibold, kVW / 2, y, 20 * U, col::white, set->titleUnicode.empty() ? set->title : set->titleUnicode,
+            text(c, c.fonts->semibold, kVW / 2, y, 20 * U, col::white, set->shownTitle(c.settings->originalMetadata),
                  gfx::Align::Center, pw - 20 * U);
             y += 24 * U;
-            text(c, c.fonts->semibold, kVW / 2, y, 14 * U, col::white, set->artistUnicode.empty() ? set->artist : set->artistUnicode,
+            text(c, c.fonts->semibold, kVW / 2, y, 14 * U, col::white, set->shownArtist(c.settings->originalMetadata),
                  gfx::Align::Center, pw - 20 * U);
             y += 18 * U;
         }

@@ -239,6 +239,9 @@ void audioStop() {
 int audioBlockFrames() { return g_audioBlock; }
 
 const char *writableDir() { return "."; }
+bool textInputSupported() { return false; }
+bool startTextInput(const char *, const std::string &) { return false; }
+int pollTextInput(std::string &) { return 0; }
 const char *assetsDir() {
     const char *env = getenv("RHYTHM_ASSETS");
     return env && *env ? env : RHYTHM_ASSETS_DIR;

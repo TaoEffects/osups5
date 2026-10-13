@@ -937,6 +937,9 @@ void Play::render(Context &ctx) {
 
     // Curseur et traînée.
     trail_.emplace_front(cursorX_, cursorY_);
+    if (!ctx.settings->cursorTrail) trail_.resize(1);
+    // Taille du curseur réglable : tout le dessin du curseur est mis à l'échelle autour de lui.
+    b.pushScaleAround(cursorX_, cursorY_, ctx.settings->cursorSize);
     if (skin_ && skin_->cursor.ok()) {
         renderSkinnedCursor(ctx);
     } else if (flat) {
@@ -961,6 +964,7 @@ void Play::render(Context &ctx) {
     b.centered(ctx.tex->glow, cursorX_, cursorY_, 70, gfx::rgba(255, 150, 210, 160));
     b.centered(ctx.tex->disc, cursorX_, cursorY_, held_ ? 30.0f : 24.0f, gfx::rgba(255, 255, 255));
     }
+    b.popTransform();
 
     if (failed_) {
         const float k = anim::clamp01(static_cast<float>((now - failTime_) / 1.0));
@@ -970,6 +974,7 @@ void Play::render(Context &ctx) {
 }
 
 void Play::renderHud(Context &ctx, double t) {
+    if (!ctx.settings->showHud) return;
     gfx::SpriteBatch &b = *ctx.batch;
     const float dt = ctx.dt;
     displayScore_ = anim::approach(static_cast<float>(displayScore_), static_cast<float>(score_), dt, 0.06f);

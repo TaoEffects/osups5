@@ -21,7 +21,10 @@ namespace lz {
 using anim::Ease;
 using anim::Tween;
 
-constexpr float U = 1.40625f;
+// Unité de mise en page : 1,40625 px par u en 1080p, multipliée par la taille
+// d'interface choisie dans les options (setUiScale).
+inline float U = 1.40625f;
+inline void setUiScale(float s) { U = 1.40625f * s; }
 constexpr float kShear = 0.2f;  // OsuGame.SHEAR
 
 inline double ms(const Context &c) { return c.now * 1000.0; }
@@ -85,7 +88,7 @@ uint32_t starTextColor(float stars);
 uint32_t rankColor(const std::string &rank);
 
 // Icône Font Awesome centrée en (cx, cy) ; size = hauteur du carré de l'icône.
-void icon(Context &c, const char *glyph, float cx, float cy, float size, uint32_t color);
+void icon(Context &c, const char *glyph, float cx, float cy, float size, uint32_t color, float angle = 0, float sx = 1, float sy = 1);
 // Roue de chargement (LoadingSpinner).
 void spinner(Context &c, float cx, float cy, float size, float alpha);
 // Pastille d'étoiles (StarRatingDisplay). Renvoie la largeur.
@@ -130,11 +133,14 @@ void padGlyph(Context &c, Pad p, float cx, float cy, float size, float alpha = 1
 
 // Bouton retour rose du pied de page (ScreenBackButton) ; x, y = coin bas gauche.
 void backButton(Context &c, ButtonFx &fx, float x, float bottom, const char *label, float alpha = 1);
-constexpr float kBackW = 240 * U, kBackH = 50 * U;
+#define kBackW (240 * lz::U)
+#define kBackH (50 * lz::U)
 // Bouton du pied de page (ScreenFooterButton) 116x75 u ; x = gauche, top = haut.
 void footerButton(Context &c, ButtonFx &fx, float x, float top, const char *glyph, const char *label, uint32_t accent,
                   bool active, float alpha = 1, int padHint = -1);
-constexpr float kFooterBtnW = 116 * U, kFooterBtnH = 75 * U, kFooterH = 50 * U;
+#define kFooterBtnW (116 * lz::U)
+#define kFooterBtnH (75 * lz::U)
+#define kFooterH (50 * lz::U)
 // Bouton de dialogue (pause) : boîte inclinée de largeur relative animée.
 void dialogButton(Context &c, ButtonFx &fx, float cx, float cy, float fullW, float h, const char *label,
                   uint32_t color, float alpha = 1);
@@ -150,7 +156,7 @@ public:
     bool visualiser = true;
     bool triangles = true;
     // Taille du disque visible à l'échelle 1 (481 u, comme lazer).
-    static constexpr float kSize = 481 * U;
+    static float size() { return 481 * U; }
 
     void moveTo(const Context &c, float tx, float ty, float tscale, double dur, Ease e, double delay = 0);
     void impact(const Context &c);
@@ -159,7 +165,7 @@ public:
     void draw(Context &c);
     bool hovered() const { return hovered_; }
     bool clicked() const { return clicked_; }
-    float radius(const Context &c) const { return kSize * 0.5f * scale.at(ms(c)) * hoverScale.at(ms(c)); }
+    float radius(const Context &c) const { return size() * 0.5f * scale.at(ms(c)) * hoverScale.at(ms(c)); }
     float cx(const Context &c) const { return x.at(ms(c)); }
     float cy(const Context &c) const { return y.at(ms(c)); }
 
@@ -196,8 +202,8 @@ public:
     void show(const Context &c, bool s);
     Action update(Context &c, const UiInput &in);
     void draw(Context &c);
-    static constexpr float kHeight = 40 * U;
-    float bottom(const Context &c) const { return kHeight * shown.at(ms(c)); }
+    static float height() { return 40 * U; }
+    float bottom(const Context &c) const { return height() * shown.at(ms(c)); }
 
 private:
     ButtonFx fx_[4];
@@ -208,6 +214,10 @@ private:
 // Texte avec ombre douce, et texte ellipsé dans une largeur.
 float text(Context &c, const gfx::Font &f, float x, float y, float size, uint32_t color, const std::string &s,
            gfx::Align a = gfx::Align::Left, float maxW = 0, bool shadow = false);
+
+// Texte sur plusieurs lignes (coupé aux espaces) ; renvoie la hauteur occupée.
+float paragraph(Context &c, const gfx::Font &f, float x, float y, float width, float size, uint32_t color, const std::string &s,
+                gfx::Align a = gfx::Align::Left, float lineHeight = 1.4f);
 
 // Curseur du menu.
 void cursor(Context &c, float x, float y, bool pressed);

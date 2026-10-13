@@ -125,8 +125,8 @@ private:
     void saveScores() const;
 
     gfx::SpriteBatch batch_;
-    gfx::MsaaTarget msaa_;
     Fonts fonts_;
+    gfx::GlyphCache cjk_;  // japonais (titres d'origine, recherche)
     Textures tex_;
     audio::Mixer mixer_;
     audio::Music music_;
@@ -170,7 +170,6 @@ private:
     float lastMouseX_ = -1, lastMouseY_ = -1;
     bool touchWasDown_ = false;
     bool mouseActive_ = false;
-    bool msaaFailed_ = false;
     float touchLastX_ = 0, touchLastY_ = 0;
     double lastFrame_ = -1;
     double fpsAccum_ = 0;

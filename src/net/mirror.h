@@ -28,6 +28,7 @@ struct RemoteDiff {
 struct RemoteSet {
     int id = 0;
     std::string title, artist, creator, status;
+    std::string titleUnicode, artistUnicode;
     double bpm = 0;
     int lengthSec = 0;
     long long playCount = 0, favourites = 0;

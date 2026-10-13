@@ -30,6 +30,9 @@ struct SetInfo {
     std::string title, titleUnicode, artist, artistUnicode, creator, source, tags;
     std::vector<DiffInfo> diffs;  // triées par difficulté croissante
     std::string path(const std::string &root) const { return root + "/" + folder; }
+    // Titre et artiste à afficher : langue d'origine si demandé et disponible.
+    const std::string &shownTitle(bool original) const { return original && !titleUnicode.empty() ? titleUnicode : title; }
+    const std::string &shownArtist(bool original) const { return original && !artistUnicode.empty() ? artistUnicode : artist; }
 };
 
 class Library {

@@ -47,8 +47,11 @@ L'appli affiche aussi une notification avec son IP et le port (9025).
 
 1. **Intro** : « bienvenue sur rhythm », triangles, icônes, grand triangle, flash blanc.
    N'importe quelle touche la passe.
-2. **Premier lancement** (une seule fois) : l'écran « configuration initiale » télécharge
-   le tutoriel et 20 maps de base. Tu peux continuer (Croix) pendant que ça télécharge.
+2. **Premier lancement** (une seule fois, relançable dans Options → Divers) : un assistant
+   en 5 étapes. Maps : Croix sur « Tutoriel » et/ou « Maps de base » pour les télécharger
+   (rien n'est téléchargé sans le demander). Façon de jouer : manette, clavier/souris ou
+   les deux. Interface : taille, style de jeu, fréquence. L1/R1 = étape précédente/suivante.
+   L'intro attend que l'écran ait fini de passer en 120 Hz avant de démarrer.
 3. **Menu** : Croix (ou clic sur le logo) ouvre la bande de boutons. Gauche/droite pour
    choisir, Croix pour valider, Rond pour revenir au logo seul.
 4. **Sélection de map** : haut/bas = difficultés et maps, gauche/droite = map
@@ -62,7 +65,13 @@ L'appli affiche aussi une notification avec son IP et le port (9025).
 8. **Options** (bouton du menu ou Options) : panneau à gauche, L1/R1 = sections.
    Essaie **Style de jeu** : « Épuré » (façon WhiteCat) ou « Triangles » (façon lazer).
 9. **Télécharger** (bouton du menu ou icône en haut à droite) : L1/R1 = tri,
-   L2/R2 = page, Croix = télécharger.
+   **Carré = rechercher au clavier de la console**, Croix = télécharger. La liste se charge
+   au fur et à mesure qu'on descend (L2/R2 = début/fin).
+10. **Recherche dans la sélection de maps** : clic du **pavé tactile** = clavier de la console.
+11. **Options → Commandes** : touches clavier (Croix puis appuie sur la touche), boutons
+    de manette qui frappent (un par un), souris en jeu, taille et traînée du curseur.
+    **Options → Interface** : taille de l'interface, métadonnées d'origine (titres en
+    japonais), parallaxe, intro. **Fréquence** : « Auto (120 Hz) » par défaut.
 
 Clavier/souris (PC) : flèches + Entrée/Échap, Z/X pour frapper, souris partout, molette,
 F1 mods, F2 hasard, F3 options, Espace passer.

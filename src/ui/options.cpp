@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <deque>
 #include <functional>
 #include <string>
 #include <vector>
@@ -14,7 +15,44 @@
 
 namespace {
 
-enum class Kind { Toggle, Slider, Choice };
+// Nom lisible d'une touche (codes HID, clavier USB ou PC).
+std::string keyName(int k) {
+    if (k >= 0x04 && k <= 0x1D) return std::string(1, static_cast<char>('A' + (k - 0x04)));
+    if (k >= 0x1E && k <= 0x26) return std::string(1, static_cast<char>('1' + (k - 0x1E)));
+    switch (k) {
+    case 0x27: return "0";
+    case 0x28: return "Entrée";
+    case 0x2A: return "Retour arrière";
+    case 0x2B: return "Tab";
+    case 0x2C: return "Espace";
+    case 0x2D: return "-";
+    case 0x2E: return "=";
+    case 0x2F: return "[";
+    case 0x30: return "]";
+    case 0x33: return ";";
+    case 0x34: return "'";
+    case 0x36: return ",";
+    case 0x37: return ".";
+    case 0x38: return "/";
+    case 0x4F: return "Droite";
+    case 0x50: return "Gauche";
+    case 0x51: return "Bas";
+    case 0x52: return "Haut";
+    case 0xE0: return "Ctrl gauche";
+    case 0xE1: return "Maj gauche";
+    case 0xE2: return "Alt gauche";
+    case 0xE4: return "Ctrl droit";
+    case 0xE5: return "Maj droit";
+    case 0xE6: return "Alt droit";
+    default: {
+        char b[24];
+        snprintf(b, sizeof(b), "Touche %02X", k);
+        return b;
+    }
+    }
+}
+
+enum class Kind { Toggle, Slider, Choice, Key };
 
 struct Item {
     const char *section;
@@ -25,14 +63,16 @@ struct Item {
     std::function<void(int dir)> change;
     std::function<float()> fill;      // 0..1 pour les curseurs
     std::function<void(float)> setFill;
+    int *keyRef = nullptr;  // Kind::Key : touche (code HID) à réassigner
 };
 
 
 // Panneau d'options façon SettingsOverlay de lazer : barre d'icônes de 70 u et
 // panneau de 400 u qui glissent depuis la gauche (600 ms OutQuint), sous la
 // barre d'outils. Palette violette (OverlayColourProvider Purple).
-constexpr float kSidebarW = 70 * lz::U, kPanelW = 400 * lz::U;
-constexpr float kPad = 20 * lz::U;
+#define kSidebarW (70 * lz::U)
+#define kPanelW (400 * lz::U)
+#define kPad (20 * lz::U)
 
 class Options : public Screen {
 public:
@@ -58,6 +98,23 @@ public:
 
     void update(const UiInput &in) override {
         Context &c = game.ctx;
+        // Attente d'une touche à assigner : la prochaine touche pressée (Échap annule).
+        if (capture_ >= 0) {
+            if (in.raw && in.raw->keyboard.connected) {
+                for (int k = 4; k < 232; ++k) {
+                    if (!in.raw->keyboard.keys[k] || prevKeys_[k]) continue;
+                    if (k != 0x29) *items_[static_cast<size_t>(capture_)].keyRef = k;
+                    capture_ = -1;
+                    c.play(c.sfx->uiSelect);
+                    break;
+                }
+                for (int k = 0; k < 256; ++k) prevKeys_[k] = in.raw->keyboard.keys[k];
+            }
+            if (in.back && capture_ >= 0) capture_ = -1;
+            return;
+        }
+        if (in.raw)
+            for (int k = 0; k < 256; ++k) prevKeys_[k] = in.raw->keyboard.keys[k];
         const float x0 = panelX();
         if (in.back || in.options || (in.mouseClick && in.mouseX > x0 + kSidebarW + kPanelW)) {
             c.play(c.sfx->uiBack);
@@ -76,8 +133,13 @@ public:
         }
         if (in.wheel != 0) target_ = std::clamp(target_ - in.wheel * 120, 0.0f, maxScroll());
         if (in.left || in.right || in.confirm) {
-            items_[static_cast<size_t>(cursor_)].change(in.left ? -1 : 1);
-            changed();
+            Item &it = items_[static_cast<size_t>(cursor_)];
+            if (it.kind == Kind::Key) {
+                if (in.confirm) capture_ = cursor_;
+            } else {
+                it.change(in.left ? -1 : 1);
+                changed();
+            }
         }
         // Souris : survol, clic, glisser sur les curseurs.
         const bool held = in.raw && (in.raw->mouse.buttons & 1u);
@@ -91,6 +153,9 @@ public:
             if (it.kind == Kind::Slider && held && in.mouseY > y + h * 0.45f) {
                 it.setFill((in.mouseX - cx) / cw);
                 c.applyVolumes();
+                lz::setUiScale(c.settings->uiScale);
+            } else if (in.mouseClick && it.kind == Kind::Key) {
+                capture_ = i;
             } else if (in.mouseClick && it.kind != Kind::Slider) {
                 it.change(in.mouseX < cx + cw * 0.5f && it.kind == Kind::Choice ? -1 : 1);
                 changed();
@@ -157,7 +222,8 @@ public:
                 b.roundRect(cx - 10 * U, y, cw + 20 * U, h, 5 * U, pal.background3);
                 b.roundRect(cx - 10 * U, y + 6 * U, 3 * U, h - 12 * U, 2 * U, col::pink1);
             }
-            const std::string v = it.value();
+            std::string v = it.value();
+            if (it.kind == Kind::Key && capture_ == static_cast<int>(i)) v = "appuie sur une touche...";
             const float ts = 16 * U;
             if (it.kind == Kind::Toggle) {
                 c.fonts->regular.drawMid(b, cx, y + h / 2, ts, col::white, it.label);
@@ -241,8 +307,8 @@ private:
         return 0;
     }
     const char *sectionIcon(int s) const {
-        static const char *icons[] = {fa::display, fa::volume_high, fa::gamepad, fa::gear};
-        return icons[s % 4];
+        static const char *icons[] = {fa::display, fa::sliders, fa::volume_high, fa::gamepad, fa::gear};
+        return icons[s % 5];
     }
     void drawSwitch(float x, float y, bool on, bool sel) {
         using namespace lz;
@@ -255,6 +321,7 @@ private:
     }
     void changed() {
         game.ctx.applyVolumes();
+        lz::setUiScale(game.ctx.settings->uiScale);
         game.ctx.play(game.ctx.sfx->uiHover);
     }
 
@@ -289,6 +356,28 @@ private:
                           [&v, lo, hi] { return (v - lo) / (hi - lo); },
                           [&v, lo, hi, step](float f) { v = std::clamp(std::round((lo + f * (hi - lo)) / step) * step, lo, hi); }});
     }
+    void key(const char *section, const char *label, const char *help, int &k) {
+        Item it{section, label, help, Kind::Key, [&k] { return keyName(k); }, [](int) {}, nullptr, nullptr};
+        it.keyRef = &k;
+        items_.push_back(it);
+    }
+    // Bouton de manette qui frappe (ou non) en jeu.
+    void padButton(const char *name, unsigned bit) {
+        Settings &s = *game.ctx.settings;
+        labels_.push_back(std::string("Frappe avec ") + name);
+        items_.push_back({"Commandes", labels_.back().c_str(), "Ce bouton de la manette sert à frapper pendant les parties.",
+                          Kind::Toggle,
+                          [&s, bit] {
+                              const unsigned m = s.padHitMask ? s.padHitMask : Settings::defaultPadHitMask();
+                              return std::string(m & bit ? "on" : "off");
+                          },
+                          [&s, bit](int) {
+                              unsigned m = s.padHitMask ? s.padHitMask : Settings::defaultPadHitMask();
+                              m ^= bit;
+                              s.padHitMask = m ? m : bit;  // au moins un bouton
+                          },
+                          nullptr, nullptr});
+    }
     void toggle(const char *section, const char *label, const char *help, bool &v) {
         items_.push_back({section, label, help, Kind::Toggle, [&v] { return std::string(v ? "on" : "off"); }, [&v](int) { v = !v; },
                           nullptr, nullptr});
@@ -298,9 +387,15 @@ private:
         Settings &s = *game.ctx.settings;
         items_.clear();
         items_.push_back({"Affichage", "Fréquence d'affichage",
-                          "60 ou 120 images par seconde. Le 120 Hz demande un téléviseur compatible ; la PS5 ne sort pas "
-                          "au-delà de 120 Hz. Prend effet au prochain lancement.",
-                          Kind::Choice, [&s] { return std::to_string(s.refreshHz) + " Hz"; },
+                          "Auto : 120 Hz si l'écran le permet, sinon la console reste d'elle-même en 60 Hz. La PS5 ne "
+                          "sort pas au-delà de 120 Hz. Un changement prend effet au prochain lancement.",
+                          Kind::Choice,
+                          [&s] {
+                              const int real = plat::refreshHz();
+                              std::string v = s.refreshHz == 120 ? "Auto (120 Hz)" : "60 Hz";
+                              if (real > 0) v += "  ·  actuel " + std::to_string(real) + " Hz";
+                              return v;
+                          },
                           [&s](int) { s.refreshHz = s.refreshHz == 60 ? 120 : 60; }, nullptr, nullptr});
         items_.push_back({"Affichage", "Style de jeu",
                           "Épuré : cercles sombres à fin liseré blanc (façon WhiteCat). Triangles : le style coloré de "
@@ -327,13 +422,21 @@ private:
                           nullptr, nullptr});
         slider("Affichage", "Assombrissement du fond", "Assombrit l'image de fond pendant les parties pour mieux voir les cercles.",
                s.backgroundDim, 0, 1, 0.05f, [&s] { return pct(s.backgroundDim); });
+        toggle("Affichage", "Fond flou en jeu", "Floute l'image de fond pendant les parties.", s.blurInGame);
+        toggle("Affichage", "Interface en jeu", "Score, précision, combo et barre de vie pendant la partie.", s.showHud);
         toggle("Affichage", "Barre d'erreur de frappe", "Affiche en bas de l'écran si tes frappes sont en avance ou en retard.",
                s.showHitErrorBar);
-        toggle("Affichage", "Anticrénelage MSAA",
-               "Lisse encore plus les bords, mais peut faire chuter fortement les images par seconde sur la console. "
-               "Laisse désactivé si le jeu rame.",
-               s.msaa);
-        toggle("Affichage", "Infos de débogage", "Affiche les FPS, les appels de dessin et l'adresse du log réseau.", s.showDebug);
+        slider("Interface", "Taille de l'interface", "Agrandit ou réduit les menus (80 à 130 %).", s.uiScale, 0.8f, 1.3f, 0.05f,
+               [&s] { return pct(s.uiScale); });
+        items_.push_back({"Interface", "Thème", "Le thème moderne s'inspire d'osu!lazer. Les thèmes « stable » et « classique » "
+                          "arrivent bientôt.",
+                          Kind::Choice, [] { return std::string("Moderne (lazer)"); },
+                          [this](int) { game.toast("Les thèmes « stable » et « classique » arrivent bientôt"); }, nullptr, nullptr});
+        toggle("Interface", "Métadonnées d'origine",
+               "Affiche les titres et artistes dans leur langue d'origine (japonais...) quand la map les fournit.",
+               s.originalMetadata);
+        toggle("Interface", "Effet de parallaxe", "Le fond et le menu suivent légèrement la souris.", s.menuParallax);
+        toggle("Interface", "Intro au démarrage", "La séquence d'ouverture avant le menu.", s.introEnabled);
         slider("Son", "Volume général", "Volume de tout le jeu.", s.masterVolume, 0, 1, 0.05f, [&s] { return pct(s.masterVolume); });
         slider("Son", "Musique", "Volume de la musique.", s.musicVolume, 0, 1, 0.05f, [&s] { return pct(s.musicVolume); });
         slider("Son", "Effets", "Sons de frappe et de l'interface.", s.effectsVolume, 0, 1, 0.05f, [&s] { return pct(s.effectsVolume); });
@@ -342,31 +445,64 @@ private:
                           "automatique.",
                           Kind::Choice, [&s] { return (s.offsetMs > 0 ? "+" : "") + std::to_string(s.offsetMs) + " ms"; },
                           [&s](int d) { s.offsetMs = std::clamp(s.offsetMs + 5 * d, -300, 300); }, nullptr, nullptr});
-        slider("Manette", "Vitesse du curseur",
+        items_.push_back({"Commandes", "Façon de jouer",
+                          "Manette seule, clavier et souris, ou les deux en même temps.", Kind::Choice,
+                          [&s] { return std::string(s.inputMode == 1 ? "Manette" : s.inputMode == 2 ? "Clavier et souris" : "Les deux"); },
+                          [&s](int d) {
+                              s.inputMode = (s.inputMode + (d < 0 ? 2 : 1)) % 3;
+                              s.mouseButtonsInGame = s.inputMode != 1;
+                          },
+                          nullptr, nullptr});
+        key("Commandes", "Touche de frappe 1", "Croix ou Entrée, puis appuie sur la touche voulue (Échap annule).", s.keyHit1);
+        key("Commandes", "Touche de frappe 2", "Croix ou Entrée, puis appuie sur la touche voulue (Échap annule).", s.keyHit2);
+        padButton("Croix", plat::kPadCross);
+        padButton("Carré", plat::kPadSquare);
+        padButton("Rond", plat::kPadCircle);
+        padButton("Triangle", plat::kPadTriangle);
+        padButton("L1", plat::kPadL1);
+        padButton("R1", plat::kPadR1);
+        padButton("L2", plat::kPadL2);
+        padButton("R2", plat::kPadR2);
+        toggle("Commandes", "Clics de souris en jeu", "Les clics gauche et droit servent à frapper.", s.mouseButtonsInGame);
+        items_.push_back({"Commandes", "Pavé tactile",
+                          "Absolu : le pavé correspond à l'aire de jeu, comme une tablette (sans lissage). Relatif : il "
+                          "déplace le curseur comme un trackpad.",
+                          Kind::Choice, [&s] { return std::string(s.touchpadAbsolute ? "Absolu" : "Relatif"); },
+                          [&s](int) { s.touchpadAbsolute = !s.touchpadAbsolute; }, nullptr, nullptr});
+        slider("Commandes", "Vitesse du curseur (stick)",
                "Vitesse du curseur quand le stick gauche est poussé à fond. Le stick droit donne un mouvement fin.", s.cursorSpeed, 300,
                4000, 100, [&s] { return std::to_string(static_cast<int>(s.cursorSpeed)); });
-        slider("Manette", "Courbe du stick", "Plus la valeur est haute, plus les petits mouvements sont précis.", s.cursorCurve, 1, 3,
+        slider("Commandes", "Courbe du stick", "Plus la valeur est haute, plus les petits mouvements sont précis.", s.cursorCurve, 1, 3,
                0.1f, [&s] {
                    char b[16];
                    snprintf(b, sizeof(b), "%.1f", s.cursorCurve);
                    return std::string(b);
                });
-        items_.push_back({"Manette", "Pavé tactile",
-                          "Absolu : le pavé correspond à l'aire de jeu, comme une tablette (sans lissage). Relatif : il "
-                          "déplace le curseur comme un trackpad.",
-                          Kind::Choice, [&s] { return std::string(s.touchpadAbsolute ? "Absolu" : "Relatif"); },
-                          [&s](int) { s.touchpadAbsolute = !s.touchpadAbsolute; }, nullptr, nullptr});
+        slider("Commandes", "Taille du curseur", "Taille du curseur en jeu.", s.cursorSize, 0.5f, 2.0f, 0.1f,
+               [&s] { return pct(s.cursorSize); });
+        toggle("Commandes", "Traînée du curseur", "La traînée qui suit le curseur en jeu.", s.cursorTrail);
+        items_.push_back({"Divers", "Configuration initiale", "Relance l'assistant du premier lancement (maps de base, façon de jouer...).",
+                          Kind::Choice, [] { return std::string("Ouvrir"); },
+                          [this](int) {
+                              game.closeOverlay();
+                              game.goTo(game.makeFirstRun());
+                          },
+                          nullptr, nullptr});
+        toggle("Divers", "Infos de débogage", "Affiche les FPS, les appels de dessin et l'adresse du log réseau.", s.showDebug);
         sections_.clear();
         for (const Item &it : items_)
             if (sections_.empty() || sections_.back() != it.section) sections_.push_back(it.section);
     }
 
     std::vector<Item> items_;
+    std::deque<std::string> labels_;  // libellés construits (adresses stables)
     std::vector<std::string> sections_;
     int cursor_ = 0;
     float scroll_ = 0, target_ = 0;
     lz::Tween slide_{0};
     int refreshAtEnter_ = 60;
+    int capture_ = -1;
+    bool prevKeys_[256] = {};
 };
 
 }  // namespace

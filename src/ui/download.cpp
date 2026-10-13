@@ -18,8 +18,10 @@ namespace {
 using namespace lz;
 
 constexpr int kCols = 3;
-constexpr float kCardW = 430 * U, kCardH = 100 * U, kGap = 10 * U;
-constexpr float kMargin = (kVW - kCols * kCardW - (kCols - 1) * kGap) / 2;
+#define kCardW (430 * U)
+#define kCardH (100 * U)
+#define kGap (10 * U)
+#define kMargin ((kVW - kCols * kCardW - (kCols - 1) * kGap) / 2)
 
 const char *const kTabs[] = {"Populaires", "Récentes", "Favorites"};
 
@@ -51,10 +53,25 @@ public:
         std::string error;
         std::vector<net::RemoteSet> results;
         if (game.mirror.takeResults(results, error)) {
-            results_ = std::move(results);
             error_ = error;
-            cursor_ = 0;
-            scroll_ = target_ = 0;
+            if (loadingMore_) {
+                // Page suivante : ajoutée à la suite (sans doublons).
+                loadingMore_ = false;
+                const size_t before = results_.size();
+                for (net::RemoteSet &r : results) {
+                    bool dup = false;
+                    for (const net::RemoteSet &e : results_) dup = dup || e.id == r.id;
+                    if (!dup) results_.push_back(std::move(r));
+                }
+                endReached_ = results_.size() - before == 0;
+                appearFrom_ = static_cast<int>(before);
+            } else {
+                results_ = std::move(results);
+                cursor_ = 0;
+                scroll_ = target_ = 0;
+                endReached_ = results_.empty();
+                appearFrom_ = 0;
+            }
             appear_ = ms(c);
             for (const net::RemoteSet &s : results_)
                 if (!s.coverUrl.empty() && !covers_.count(s.id)) game.mirror.requestCover(s.id, s.coverUrl);
@@ -90,12 +107,25 @@ public:
             c.play(c.sfx->uiHover);
             refresh();
         }
-        if (in.r2 || in.l2) {
-            page_ = std::max(0, page_ + (in.r2 ? 1 : -1));
-            c.play(c.sfx->uiHover);
-            refresh();
-        }
         if (in.extra) refresh();
+        // Recherche : clavier virtuel de la console (Carré ou clic sur la barre).
+        const float sy = game.toolbar.bottom(c) + 72 * U;
+        if (plat::textInputSupported() && !imeOpen_ && (in.extra2 || in.clicked(kMargin, sy + 18 * U, kVW - kMargin * 2, 40 * U))) {
+            imeOpen_ = plat::startTextInput("Rechercher des maps", query_);
+        }
+        if (imeOpen_) {
+            std::string text;
+            const int r = plat::pollTextInput(text);
+            if (r != 0) {
+                imeOpen_ = false;
+                if (r > 0) {
+                    query_ = text;
+                    page_ = 0;
+                    refresh();
+                }
+            }
+            return;
+        }
         typing(in);
 
         const int n = static_cast<int>(results_.size());
@@ -106,6 +136,8 @@ public:
             if (in.down) cursor_ = std::min(n - 1, cursor_ + kCols);
             if (in.up) cursor_ = std::max(0, cursor_ - kCols);
             if (in.wheel != 0) target_ = std::clamp(target_ - in.wheel * 160, 0.0f, maxScroll());
+            if (in.r2) cursor_ = n - 1;
+            if (in.l2) cursor_ = 0;
             bool activate = in.confirm;
             for (int i = 0; i < n; ++i) {
                 float x, y;
@@ -142,6 +174,15 @@ public:
             }
         }
         scroll_ = anim::damp(scroll_, target_, 50, c.dt * 1000);
+        // Défilement infini : la page suivante dès qu'on approche de la fin.
+        const int rows = (static_cast<int>(results_.size()) + kCols - 1) / kCols;
+        const bool nearEnd = cursor_ / kCols >= rows - 2 || target_ >= maxScroll() - kCardH * 2;
+        if (!results_.empty() && nearEnd && !endReached_ && !loadingMore_ && !game.mirror.searchBusy() && error_.empty()) {
+            loadingMore_ = true;
+            ++page_;
+            const net::Sort sorts[] = {net::Sort::Popular, net::Sort::Recent, net::Sort::Favourites};
+            game.mirror.search(query_, sorts[tab_], page_);
+        }
     }
 
     void render() override {
@@ -175,13 +216,19 @@ public:
             cardPos(i, x, y);
             if (y + kCardH < gridTop() - 10 * U || y > kVH) continue;
             // Apparition en cascade.
-            const float ap = anim::ease(Ease::OutQuint, static_cast<float>(std::clamp((t - appear_ - i * 25.0) / 400.0, 0.0, 1.0)));
+            const int k = std::max(0, i - appearFrom_);
+            const float ap = i < appearFrom_ ? 1.0f
+                                             : anim::ease(Ease::OutQuint, static_cast<float>(std::clamp((t - appear_ - k * 25.0) / 400.0, 0.0, 1.0)));
             b.pushTransform(0, (1 - ap) * 30 * U, 1, ap);
             renderCard(i, x, y, byId);
             b.popTransform();
         }
         b.popClip();
-        if (game.mirror.searchBusy()) {
+        if (game.mirror.searchBusy() && loadingMore_) {
+            float lx, ly;
+            cardPos(static_cast<int>(results_.size()), lx, ly);
+            spinner(c, kVW / 2, ly + kCardH / 2, 32 * U, 1);
+        } else if (game.mirror.searchBusy()) {
             spinner(c, kVW / 2, gridTop() + 200 * U, 40 * U, 1);
         } else if (!error_.empty()) {
             text(c, c.fonts->semibold, kVW / 2, gridTop() + 160 * U, 24 * U, col::red1, "Erreur réseau : " + error_, gfx::Align::Center);
@@ -214,7 +261,7 @@ public:
         b.roundRect(bx, sy + 18 * U, bw, 40 * U, 5 * U, alpha(pal.background6, 0.85f));
         icon(c, fa::magnifying_glass, bx + 22 * U, sy + 38 * U, 16 * U, pal.light2);
         const bool empty = query_.empty();
-        const std::string shown = empty ? "rechercher (clavier)..." : query_ + "_";
+        const std::string shown = empty ? (plat::textInputSupported() ? "rechercher (Carré)..." : "rechercher (clavier)...") : query_ + (plat::textInputSupported() ? "" : "_");
         c.fonts->regular.drawMid(b, bx + 44 * U, sy + 38 * U, 20 * U, empty ? pal.light4 : col::white, shown.c_str());
         // Onglets de tri.
         c.fonts->semibold.drawMid(b, bx, tabsY() + 15 * U, 15 * U, pal.content2, "Tri");
@@ -225,7 +272,7 @@ public:
             c.fonts->semibold.drawMid(b, tx + tw / 2, tabsY() + 15 * U, 16 * U, sel ? col::white : pal.light2, kTabs[i], gfx::Align::Center);
         }
         char line[64];
-        snprintf(line, sizeof(line), "page %d", page_ + 1);
+        snprintf(line, sizeof(line), "%zu maps", results_.size());
         c.fonts->regular.drawMid(b, bx + bw, tabsY() + 15 * U, 16 * U, pal.content2, line, gfx::Align::Right);
         // Aide manette.
         const float fy = kVH - 30 * U;
@@ -240,9 +287,10 @@ public:
         hint(Pad::L1, "");
         hx -= 18 * U;
         hint(Pad::R1, "tri");
+        hint(Pad::Square, "rechercher");
         hint(Pad::L2, "");
         hx -= 18 * U;
-        hint(Pad::R2, "page");
+        hint(Pad::R2, "début / fin");
         hint(Pad::Triangle, "actualiser");
         hint(Pad::Circle, "fermer");
         b.popTransform();
@@ -314,8 +362,11 @@ private:
         if (fl > 0) b.roundRect(x, y, kCardW, kCardH, r, alpha(col::white, fl));
         // Textes.
         const float tx = x + kCardH + 10 * U, tw = cw - kCardH - 20 * U;
-        text(c, c.fonts->semibold, tx, y + 7 * U, 18 * U, col::white, s.title, gfx::Align::Left, tw);
-        text(c, c.fonts->semibold, tx, y + 29 * U, 14 * U, pal.content2, "de " + s.artist, gfx::Align::Left, tw);
+        const bool orig = c.settings->originalMetadata;
+        const std::string &title = orig && !s.titleUnicode.empty() ? s.titleUnicode : s.title;
+        const std::string &artist = orig && !s.artistUnicode.empty() ? s.artistUnicode : s.artist;
+        text(c, c.fonts->semibold, tx, y + 7 * U, 18 * U, col::white, title, gfx::Align::Left, tw);
+        text(c, c.fonts->semibold, tx, y + 29 * U, 14 * U, pal.content2, "de " + artist, gfx::Align::Left, tw);
         text(c, c.fonts->regular, tx, y + 47 * U, 13 * U, pal.light2, "mappée par " + s.creator, gfx::Align::Left, tw);
         // Statut + pastilles de difficulté.
         const bool ranked = s.status == "ranked" || s.status == "approved";
@@ -362,6 +413,9 @@ private:
     }
 
     void refresh() {
+        page_ = 0;
+        loadingMore_ = false;
+        endReached_ = false;
         const net::Sort sorts[] = {net::Sort::Popular, net::Sort::Recent, net::Sort::Favourites};
         game.mirror.search(query_, sorts[tab_], page_);
         error_.clear();
@@ -412,6 +466,8 @@ private:
     Tween waves_[4], content_{0};
     bool prevKeys_[256] = {};
     bool searchPending_ = false;
+    bool loadingMore_ = false, endReached_ = false, imeOpen_ = false;
+    int appearFrom_ = 0;
 };
 
 }  // namespace

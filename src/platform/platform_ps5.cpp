@@ -427,6 +427,126 @@ int audioBlockFrames() { return g_audioBlock; }
 const char *writableDir() { return "/download0"; }
 const char *assetsDir() { return "/app0/assets"; }
 
+// --- Clavier virtuel (SceImeDialog) -----------------------------------------
+// Structures reprises du portage SDL de ps5-payload-dev ; wchar_t fait 16 bits
+// sur cette cible, comme le texte UTF-16 attendu par le système.
+namespace {
+struct SceImeDialogParam {
+    int userId;
+    int type;                 // 0 défaut
+    uint64_t supportedLanguages;
+    int enterLabel;           // 2 « Rechercher »
+    int inputMethod;
+    void *filter;
+    uint32_t option;
+    uint32_t maxTextLength;
+    char16_t *inputTextBuffer;
+    float posx, posy;
+    int halign, valign;
+    const char16_t *placeholder;
+    const char16_t *title;
+    int8_t reserved[16];
+};
+struct SceImeDialogResult {
+    int outcome;              // 0 ok, 1 annulé, 2 interrompu
+    int8_t reserved[12];
+};
+}  // namespace
+extern "C" int sceImeDialogInit(const SceImeDialogParam *, void *);
+extern "C" int sceImeDialogGetStatus(void);
+extern "C" int sceImeDialogGetResult(SceImeDialogResult *);
+extern "C" int sceImeDialogTerm(void);
+
+namespace {
+char16_t g_imeText[256];
+char16_t g_imeTitle[128];
+bool g_imeOpen = false;
+
+void toUtf16(const std::string &in, char16_t *out, size_t cap) {
+    size_t o = 0;
+    for (size_t i = 0; i < in.size() && o + 2 < cap;) {
+        const unsigned char c = static_cast<unsigned char>(in[i]);
+        uint32_t cp = c;
+        int extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+        if (extra) cp = c & (0x3F >> extra);
+        ++i;
+        for (int k = 0; k < extra && i < in.size(); ++k, ++i) cp = (cp << 6) | (static_cast<unsigned char>(in[i]) & 0x3F);
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            out[o++] = static_cast<char16_t>(0xD800 + (cp >> 10));
+            out[o++] = static_cast<char16_t>(0xDC00 + (cp & 0x3FF));
+        } else {
+            out[o++] = static_cast<char16_t>(cp);
+        }
+    }
+    out[o] = 0;
+}
+
+std::string fromUtf16(const char16_t *in) {
+    std::string out;
+    for (size_t i = 0; in[i]; ++i) {
+        uint32_t cp = in[i];
+        if (cp >= 0xD800 && cp < 0xDC00 && in[i + 1] >= 0xDC00 && in[i + 1] < 0xE000) {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (in[i + 1] - 0xDC00);
+            ++i;
+        }
+        if (cp < 0x80) {
+            out += static_cast<char>(cp);
+        } else if (cp < 0x800) {
+            out += static_cast<char>(0xC0 | (cp >> 6));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            out += static_cast<char>(0xE0 | (cp >> 12));
+            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else {
+            out += static_cast<char>(0xF0 | (cp >> 18));
+            out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        }
+    }
+    return out;
+}
+}  // namespace
+
+bool textInputSupported() { return true; }
+
+bool startTextInput(const char *title, const std::string &initial) {
+    if (g_imeOpen) return false;
+    toUtf16(initial, g_imeText, sizeof(g_imeText) / sizeof(g_imeText[0]));
+    toUtf16(title ? title : "", g_imeTitle, sizeof(g_imeTitle) / sizeof(g_imeTitle[0]));
+    SceImeDialogParam p;
+    std::memset(&p, 0, sizeof(p));
+    p.userId = g_user;
+    p.enterLabel = 2;
+    p.maxTextLength = 120;
+    p.inputTextBuffer = g_imeText;
+    p.title = g_imeTitle;
+    p.posx = 960;
+    p.posy = 540;
+    p.halign = 1;
+    p.valign = 1;
+    const int r = sceImeDialogInit(&p, nullptr);
+    LOG("ps5: clavier virtuel -> 0x%x", r);
+    g_imeOpen = r == 0;
+    return g_imeOpen;
+}
+
+int pollTextInput(std::string &out) {
+    if (!g_imeOpen) return 0;
+    const int status = sceImeDialogGetStatus();
+    if (status != 2) return 0;  // 1 en cours, 2 terminé
+    SceImeDialogResult result;
+    std::memset(&result, 0, sizeof(result));
+    sceImeDialogGetResult(&result);
+    sceImeDialogTerm();
+    g_imeOpen = false;
+    if (result.outcome != 0) return -1;
+    out = fromUtf16(g_imeText);
+    return 1;
+}
+
 void notify(const char *message) {
     static SonyNotification request;
     std::memset(&request, 0, sizeof(request));

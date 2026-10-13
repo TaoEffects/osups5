@@ -98,10 +98,20 @@ struct Tween {
     float from = 0, to = 0;
     double start = 0, duration = 0;
     Ease easing = Ease::None;
+    // Seconde étape facultative, enchaînée à la fin de la première (Then() de lazer).
+    bool chained = false;
+    float to2 = 0;
+    double duration2 = 0;
+    Ease easing2 = Ease::None;
 
     Tween() = default;
     Tween(float v) : from(v), to(v) {}  // NOLINT(google-explicit-constructor)
     float at(double nowMs) const {
+        if (chained && nowMs >= start + duration) {
+            const double t2 = nowMs - (start + duration);
+            if (duration2 <= 0 || t2 >= duration2) return to2;
+            return to + (to2 - to) * ease(easing2, static_cast<float>(t2 / duration2));
+        }
         if (duration <= 0 || nowMs >= start + duration) return nowMs >= start ? to : from;
         if (nowMs <= start) return from;
         return from + (to - from) * ease(easing, static_cast<float>((nowMs - start) / duration));
@@ -113,6 +123,7 @@ struct Tween {
         start = nowMs + delayMs;
         duration = durationMs;
         easing = e;
+        chained = false;
     }
     // Démarre depuis une valeur imposée.
     void fromTo(double nowMs, float a, float b, double durationMs, Ease e = Ease::OutQuint, double delayMs = 0) {
@@ -121,14 +132,23 @@ struct Tween {
         start = nowMs + delayMs;
         duration = durationMs;
         easing = e;
+        chained = false;
+    }
+    // Enchaîne une seconde étape après la première.
+    void then(float target, double durationMs, Ease e = Ease::OutQuint) {
+        chained = true;
+        to2 = target;
+        duration2 = durationMs;
+        easing2 = e;
     }
     void snap(float v) {
         from = to = v;
         duration = 0;
         start = 0;
+        chained = false;
     }
-    bool done(double nowMs) const { return nowMs >= start + duration; }
-    float target() const { return to; }
+    bool done(double nowMs) const { return nowMs >= start + duration + (chained ? duration2 : 0); }
+    float target() const { return chained ? to2 : to; }
 };
 
 // Rapprochement continu de lazer (Interpolation.DampContinuously) : demi-vie en ms.

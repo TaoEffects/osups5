@@ -25,9 +25,16 @@ namespace {
 
 using namespace lz;
 
-constexpr float kSetH = 72 * U, kDiffH = 45 * U;
+#define kSetH (72 * U)
+#define kDiffH (45 * U)
 constexpr float kColW = kVW / 2;                  // colonnes gauche et droite : 50 % chacune
-constexpr float kFilterBottom = 131 * U;          // bas de la zone de recherche
+#define kFilterBottom (131 * U)  // bas de la zone de recherche
+#define kModH (42 * U)
+#define kModGap (7 * U)
+#define kColPad (14 * U)
+#define kColGap (24 * U)
+#define kColHead (44 * U)
+#define kModHeader (96 * U)
 constexpr float kHalfH = kVH / 2;
 
 const Palette &pal() {
@@ -134,6 +141,19 @@ public:
             filter();
             rebuild();
         }
+        if (imeOpen_) {
+            std::string text;
+            const int r = plat::pollTextInput(text);
+            if (r != 0) {
+                imeOpen_ = false;
+                if (r > 0) {
+                    query_ = text;
+                    filter();
+                    rebuild();
+                }
+            }
+            return;
+        }
         typing(in);
         if (modsOpen_) {
             updateMods(in);
@@ -172,6 +192,11 @@ public:
             return;
         }
         if (in.extra2) footerAction(0);
+        // Recherche au clavier virtuel de la console : clic du pavé tactile ou de la barre.
+        if (plat::textInputSupported() && !imeOpen_ &&
+            (in.touchpadClick || in.clicked(kColW, game.toolbar.height(), kColW, 60 * U))) {
+            imeOpen_ = plat::startTextInput("Rechercher une map", query_);
+        }
         if (in.extra) footerAction(1);
         if (in.options) footerAction(2);
 
@@ -283,7 +308,8 @@ private:
         for (int i = 0; i < static_cast<int>(sets.size()); ++i) {
             const game::SetInfo &s = sets[static_cast<size_t>(i)];
             if (!q.empty()) {
-                std::string hay = fsu::toLower(s.title + " " + s.artist + " " + s.creator + " " + s.tags + " " + s.source);
+                std::string hay = fsu::toLower(s.title + " " + s.artist + " " + s.creator + " " + s.tags + " " + s.source + " " +
+                                               s.titleUnicode + " " + s.artistUnicode);
                 for (const game::DiffInfo &d : s.diffs) hay += " " + fsu::toLower(d.version);
                 if (hay.find(q) == std::string::npos) continue;
             }
@@ -497,13 +523,11 @@ private:
     }
 
     // Mise en page centrée : en-tête puis 3 colonnes, le tout au milieu de l'espace libre.
-    static constexpr float kModH = 42 * U, kModGap = 7 * U, kColPad = 14 * U, kColGap = 24 * U, kColHead = 44 * U;
-    static constexpr float kModHeader = 96 * U;
     float modW() const { return 300 * U; }
     float colW() const { return modW() + kColPad * 2; }
     float modsTop() const {
         const float blockH = kModHeader + kColHead + 4 * (kModH + kModGap) + kColPad;
-        const float areaTop = game.toolbar.kHeight, areaBottom = kVH - kFooterH - 40 * U;
+        const float areaTop = game.toolbar.height(), areaBottom = kVH - kFooterH - 40 * U;
         return (areaTop + areaBottom) / 2 - blockH / 2;
     }
     float colX(int col) const {
@@ -632,8 +656,8 @@ private:
                 pa.lastBeat = c.beatIndexEarly;
                 double bl = c.beatLength;
                 while (bl < 250) bl *= 2;
-                pa.pulse.fromTo(t, 0.4f, 0.8f, 40, Ease::Out);
-                pa.pulse.go(t, 0.4f, bl, Ease::Out, 40);
+                pa.pulse.fromTo(t, pa.pulse.at(t), 0.8f, 40, Ease::Out);
+                pa.pulse.then(0.4f, bl, Ease::Out);
             }
             const float p = c.trackRunning ? pa.pulse.at(t) : 0.5f;
             b.roundRectGradient(x + w * 0.2f, y, w * 0.8f, h, r, gfx::Corners::horizontal(alpha(accent, 0), alpha(accent, 0.5f * p)));
@@ -665,16 +689,16 @@ private:
             const float aspect = (w - slot) / h, ta = static_cast<float>(th->width) / static_cast<float>(th->height);
             const float cut = std::max(0.0f, (1 - ta / aspect) / 2);
             b.roundRectTex(*th, cx, y, w - slot, h, r, col::white, 0, cut, 1, 1 - cut);
-            // Voile sombre en trois segments, incliné (0,8).
+            // Voile sombre dégradé (plus foncé à gauche pour le texte), contenu dans la carte.
             const float vw = w - slot;
-            b.roundRect(cx, y, vw * 0.4f + h * 0.4f, h, r, alpha(col::black, 0.5f), 0.8f);
-            b.roundRectGradient(cx + vw * 0.4f, y, vw * 0.2f, h, 0, gfx::Corners::horizontal(alpha(col::black, 0.5f), alpha(col::black, 0.3f)), 0.8f);
-            b.roundRectGradient(cx + vw * 0.6f - 1, y, vw * 0.45f, h, 0, gfx::Corners::horizontal(alpha(col::black, 0.3f), alpha(col::black, 0.2f)), 0.8f);
+            b.roundRectGradient(cx, y, vw * 0.45f, h, r, gfx::Corners::horizontal(alpha(col::black, 0.55f), alpha(col::black, 0.45f)));
+            b.roundRectGradient(cx + vw * 0.45f - r, y, vw * 0.55f + r, h, r,
+                                gfx::Corners::horizontal(alpha(col::black, 0.45f), alpha(col::black, 0.2f)));
         }
         panelOverlays(pa, cx, y, w - slot, h, open, accent);
         const float tx = cx + 15 * U;
-        const std::string title = s.titleUnicode.empty() ? s.title : s.titleUnicode;
-        const std::string artist = s.artistUnicode.empty() ? s.artist : s.artistUnicode;
+        const std::string title = s.shownTitle(c.settings->originalMetadata);
+        const std::string artist = s.shownArtist(c.settings->originalMetadata);
         text(c, c.fonts->bold, tx, y + 7.5f * U, 22 * U, col::white, title, gfx::Align::Left, kVW - tx - 40 * U, true);
         text(c, c.fonts->semibold, tx, y + 32 * U, 16 * U, col::white, artist, gfx::Align::Left, kVW - tx - 40 * U, true);
         // Statut (local) et pastilles de difficulté.
@@ -750,7 +774,7 @@ private:
         if (wa <= 0.001f) return;
         b.pushTransform(wx, 0, 1, wa);
         const float x = -20 * U, top = -20 * U;
-        const float pad = 32 * U, tb = game.toolbar.kHeight;
+        const float pad = 32 * U, tb = game.toolbar.height();
         const float h = tb + 20 * U + 250 * U;
         const float w = kColW + 20 * U;
         // Fond : Background5 opaque à 90 % sur 70 %, puis fondu ; reflet additif à gauche.
@@ -767,8 +791,8 @@ private:
         b.roundRect(sx(y + 9 * U), y, pw, 18 * U, 9 * U, alpha(col::black, 0.5f));
         c.fonts->bold.drawMid(b, sx(y + 9 * U) + pw / 2, y + 9 * U, 13 * U, pal().content2, "LOCALE", gfx::Align::Center);
         y += 18 * U + 4 * U;
-        const std::string title = s.titleUnicode.empty() ? s.title : s.titleUnicode;
-        const std::string artist = s.artistUnicode.empty() ? s.artist : s.artistUnicode;
+        const std::string title = s.shownTitle(c.settings->originalMetadata);
+        const std::string artist = s.shownArtist(c.settings->originalMetadata);
         text(c, c.fonts->bold, sx(y + 16 * U), y - 2 * U, 32 * U, col::white, title, gfx::Align::Left, w - pad * 3, true);
         y += 32 * U + 2 * U;
         text(c, c.fonts->semibold, sx(y + 9 * U), y, 18 * U, col::white, artist, gfx::Align::Left, w - pad * 3, true);
@@ -857,7 +881,7 @@ private:
         const float wa = wedgeA_.at(t);
         if (wa <= 0.001f) return;
         b.pushTransform(wedgeX_.at(t), 0, 1, wa);
-        const float top = game.toolbar.kHeight + 250 * U + 4 * U + 10 * U;
+        const float top = game.toolbar.height() + 250 * U + 4 * U + 10 * U;
         const float x0 = 30 * U;
         // En-tête : onglet « Classement local ».
         const float tw = c.fonts->semibold.measure(16 * U, "Classement local") + 30 * U;
@@ -926,11 +950,12 @@ private:
         b.pushAlpha(wa);
         b.roundRectGradient(x, top, w, h, 10 * U, gfx::Corners::horizontal(alpha(pal().background5, 0.6f), alpha(pal().background5, 0.9f)), kShear);
         const float bx = x + 18 * U, bw = kVW - bx - 30 * U;
-        float y = game.toolbar.kHeight + 12 * U;
+        float y = game.toolbar.height() + 12 * U;
         b.roundRect(bx, y, bw, 42 * U, 7 * U, pal().background3, kShear);
         icon(c, fa::magnifying_glass, bx + 24 * U - kShear * 0, y + 21 * U, 15 * U, pal().light2);
         const bool empty = query_.empty();
-        const std::string shown = empty ? "tape pour chercher..." : query_ + "_";
+        const std::string shown =
+            empty ? (plat::textInputSupported() ? "pavé tactile pour chercher..." : "tape pour chercher...") : query_ + (plat::textInputSupported() ? "" : "_");
         c.fonts->semibold.drawMid(b, bx + 46 * U, y + 21 * U, 18 * U, empty ? pal().light4 : col::white, shown.c_str());
         char line[64];
         snprintf(line, sizeof(line), "%zu correspondance%s", visible_.size(), visible_.size() > 1 ? "s" : "");
@@ -1054,7 +1079,7 @@ private:
     Tween footerBtnY_[4];
     ButtonFx backFx_, footerFx_[3];
     bool modsOpen_ = false;
-    bool logoPending_ = false;
+    bool logoPending_ = false, imeOpen_ = false;
     double logoAt_ = 0;
     int modCursor_ = 4;
     Tween modsA_{0}, modColY_[3], modFlash_[kModCount];

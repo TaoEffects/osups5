@@ -139,6 +139,7 @@ bool Game::init() {
     ctx.images = &images_;
     ctx.dataDir = plat::writableDir();
     settings_.load(ctx.dataDir + "/settings.cfg");
+    lz::setUiScale(settings_.uiScale);
 
     // Dossier des maps : /data est inscriptible sur la console de test (12.70) ;
     // sinon on se rabat sur /download0.
@@ -161,6 +162,9 @@ bool Game::init() {
     fonts_.semibold.load(fonts + "Outfit-SemiBold.ttf", fallback);
     fonts_.bold.load(fonts + "Outfit-Bold.ttf", fallback);
     fonts_.icons.load(fonts + "FontAwesome-Solid.ttf", "", true);
+    // Caractères japonais (et chinois) : créés à la demande depuis Noto Sans JP.
+    if (cjk_.load(fonts + "NotoSansJP-Medium.ttf", 48, fonts_.regular.ascentPx()))
+        for (gfx::Font *f : {&fonts_.light, &fonts_.regular, &fonts_.semibold, &fonts_.bold}) f->setDynamicFallback(&cjk_);
     tex_.disc = gfx::makeHitCircle(256);
     {
         // Disque plein uni (le "hit circle" procédural a un bord blanc).
@@ -263,12 +267,12 @@ void Game::shutdown() {
         gfx::destroyTexture(*t);
     for (auto &kv : thumbs_) gfx::destroyTexture(kv.second.tex);
     thumbs_.clear();
+    cjk_.shutdown();
     fonts_.light.shutdown();
     fonts_.icons.shutdown();
     fonts_.regular.shutdown();
     fonts_.semibold.shutdown();
     fonts_.bold.shutdown();
-    msaa_.destroy();
     batch_.shutdown();
 }
 
@@ -455,7 +459,7 @@ void Game::drawBackground() {
     // Parallaxe légère suivant la souris (comme lazer).
     const UiInput &in = lastInput_;
     const float px = in.mouseActive ? (in.mouseX / kVW - 0.5f) * 2 : 0, py = in.mouseActive ? (in.mouseY / kVH - 0.5f) * 2 : 0;
-    const float amount = 0.02f * backgroundParallax;
+    const float amount = settings_.menuParallax ? 0.02f * backgroundParallax : 0;
     auto draw = [&](const gfx::Texture &tex, float alpha) {
         if (!tex.id || alpha <= 0.001f) return;
         const float bw = static_cast<float>(tex.width), bh = static_cast<float>(tex.height);
@@ -580,6 +584,7 @@ UiInput Game::buildInput(const plat::InputState &raw) {
     in.options = padPressed(plat::kPadOptions) || keyPressed(kKeyF3);
     in.extra = padPressed(plat::kPadTriangle) || keyPressed(kKeyF2) || keyPressed(kKeySpace);
     in.extra2 = padPressed(plat::kPadSquare) || keyPressed(kKeyF1);
+    in.touchpadClick = padPressed(plat::kPadTouchpad);
     in.mouseRightClick = (raw.mouse.buttons & 2u) && !(prev_.mouse.buttons & 2u);
     in.wheel = raw.mouse.wheel;
     in.l1 = padPressed(plat::kPadL1) || keyPressed(kKeyPgUp);
@@ -588,12 +593,15 @@ UiInput Game::buildInput(const plat::InputState &raw) {
     in.r2 = padPressed(plat::kPadR2) || keyPressed(kKeyEnd);
 
     // Frappes (jeu).
-    const uint32_t hitMask =
-        plat::kPadCross | plat::kPadSquare | plat::kPadCircle | plat::kPadL1 | plat::kPadR1 | plat::kPadL2 | plat::kPadR2;
+    // Boutons et touches de frappe : réglables dans les options.
+    const uint32_t hitMask = settings_.padHitMask ? settings_.padHitMask : Settings::defaultPadHitMask();
+    const int k1 = std::clamp(settings_.keyHit1, 4, 231), k2 = std::clamp(settings_.keyHit2, 4, 231);
+    const uint32_t mouseMask = settings_.mouseButtonsInGame ? 3u : 0u;
     for (uint32_t b = p.buttons & ~pp.buttons & hitMask; b; b &= b - 1) ++in.hitPresses;
-    in.hitPresses += keyPressed(kKeyZ) + keyPressed(kKeyX);
-    in.hitPresses += ((raw.mouse.buttons & 1u) && !(prev_.mouse.buttons & 1u)) + ((raw.mouse.buttons & 2u) && !(prev_.mouse.buttons & 2u));
-    in.hitHeld = (p.buttons & hitMask) || raw.keyboard.keys[kKeyZ] || raw.keyboard.keys[kKeyX] || (raw.mouse.buttons & 3u);
+    in.hitPresses += keyPressed(k1) + (k2 != k1 ? keyPressed(k2) : 0);
+    in.hitPresses += ((raw.mouse.buttons & 1u & mouseMask) && !(prev_.mouse.buttons & 1u)) +
+                     ((raw.mouse.buttons & 2u & mouseMask) && !(prev_.mouse.buttons & 2u));
+    in.hitHeld = (p.buttons & hitMask) || raw.keyboard.keys[k1] || raw.keyboard.keys[k2] || (raw.mouse.buttons & mouseMask);
     in.mouseClick = (raw.mouse.buttons & 1u) && !(prev_.mouse.buttons & 1u);
 
     // Curseur : souris (absolu), pavé tactile (absolu ou relatif), sticks (relatif).
@@ -724,10 +732,7 @@ void Game::frame(const plat::InputState &raw, double now) {
     }
 
     // Rendu dans la cible MSAA (recréée si la taille change), résolue à la fin.
-    if (msaa_.fbo && (msaa_.width != plat::width() || msaa_.height != plat::height() || !settings_.msaa)) msaa_.destroy();
-    if (settings_.msaa && !msaa_.fbo && !msaaFailed_) msaaFailed_ = !msaa_.create(plat::width(), plat::height(), 4);
-    batch_.setScreenFramebuffer(msaa_.fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, msaa_.fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
     const double renderStart = plat::nowSeconds();
@@ -764,7 +769,6 @@ void Game::frame(const plat::InputState &raw, double now) {
     }
     const double submitStart = plat::nowSeconds();
     batch_.end();
-    if (msaa_.fbo) msaa_.resolveToScreen();
     const double frameEnd = plat::nowSeconds();
     perfBuild_ += (submitStart - renderStart) * 1000;
     perfSubmit_ += (frameEnd - submitStart) * 1000;
@@ -775,9 +779,9 @@ void Game::frame(const plat::InputState &raw, double now) {
         const double n = perfFrames_;
         const gfx::BatchStats &bs = batch_.lastFrame();
         LOG("perf: %.1f img/s | maj %.2f ms, construction %.2f ms, envoi GPU %.2f ms, swap %.2f ms (max image %.1f, max swap %.1f) | "
-            "%d appels, %d envois, %d quads, msaa %d",
+            "%d appels, %d envois, %d quads, %d Hz",
             n / (now - perfLast_), perfUpdate_ / n, perfBuild_ / n, perfSubmit_ / n, perfSwap_ / n, perfFrameMax_, perfSwapMax_,
-            bs.drawCalls, bs.flushes, bs.quads, msaa_.fbo ? 1 : 0);
+            bs.drawCalls, bs.flushes, bs.quads, plat::refreshHz());
         perfLast_ = now;
         perfFrames_ = 0;
         perfUpdate_ = perfBuild_ = perfSubmit_ = perfSwap_ = perfFrameMax_ = perfSwapMax_ = 0;

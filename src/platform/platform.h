@@ -3,6 +3,8 @@
 // Le reste du code (rendu, audio, jeu) ne doit jamais inclure d'en-tete Sony ou SDL.
 #pragma once
 
+#include <string>
+
 #include <cstdint>
 
 namespace plat {
@@ -99,6 +101,12 @@ const char *assetsDir();
 
 // Notification systeme (toast PS5). Sans effet sur PC.
 void notify(const char *message);
+// Clavier virtuel du système (PS5) : ouvre la saisie ; pollTextInput renvoie 1 quand
+// le texte est validé (dans out), -1 si annulé, 0 sinon. textInputSupported() est
+// faux sur PC (on tape directement au clavier).
+bool textInputSupported();
+bool startTextInput(const char *title, const std::string &initial);
+int pollTextInput(std::string &out);
 
 // Demande la fermeture propre de l'application.
 void requestExit();
