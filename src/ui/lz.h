@@ -171,7 +171,9 @@ public:
 
 private:
     Triangles tri_{7};
-    float bars_[200] = {};
+    static constexpr int kLogoBars = 120;
+    float bars_[kLogoBars] = {};
+    float barTarget_[kLogoBars] = {};
     int barOffset_ = 0;
     double lastBarUpdate_ = 0;
     long lastBeat_ = -1;

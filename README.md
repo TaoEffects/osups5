@@ -79,3 +79,9 @@ icônes [Font Awesome Free](https://fontawesome.com) (police OFL, icônes CC BY 
 reproduit le comportement d'[osu!lazer](https://github.com/ppy/osu) (MIT) d'après son code, sans
 en reprendre d'asset. Les structures des
 API Sony viennent du [fork SDL de ps5-payload-dev](https://github.com/ps5-payload-dev/SDL).
+
+Musique du lancement : « triangles » de cYsmix, tirée de
+[osu-resources](https://github.com/ppy/osu-resources) (© ppy Pty Ltd, licence
+[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)). Elle n'est **pas** incluse dans
+ce dépôt ni dans l'archive : le jeu la télécharge une fois depuis ce dépôt public au premier
+lancement, puis la garde dans `/data/rhythm-ps5/intro`.

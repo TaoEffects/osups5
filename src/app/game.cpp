@@ -2,6 +2,7 @@
 #include "app/game.h"
 
 #include <time.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include "core/fsutil.h"
 #include "core/log.h"
 #include "core/netlog.h"
+#include "core/thread.h"
 #include "net/http.h"
 #include "render/gl.h"
 #include "render/procedural.h"
@@ -210,6 +212,24 @@ bool Game::init() {
     images_.start(3, ctx.dataDir + "/cache");
     mirror.start(settings_.mirror, ctx.songsDir);
     loadScores();
+    {
+        // Piste du lancement : « triangles » (cYsmix), celle de l'intro de lazer.
+        // Elle n'est pas fournie avec le jeu (licence CC BY-NC des ressources
+        // osu!) : on la récupère une fois depuis le dépôt public ppy/osu-resources.
+        const size_t slash = ctx.songsDir.find_last_of('/');
+        const std::string base = slash == std::string::npos ? std::string(".") : ctx.songsDir.substr(0, slash);
+        const std::string dir = base + "/intro";
+        fsu::makeDirs(dir);
+        introTrackPath_ = dir + "/triangles.mp3";
+        if (fsu::exists(introTrackPath_)) {
+            introTrackState_.store(2);
+        } else {
+            introTrackState_.store(1);
+            introTrackThreadStarted_ = thr::start(introTrackThread_, introTrackMain, this, "intro");
+            if (introTrackThreadStarted_) pthread_detach(introTrackThread_);
+            else introTrackState_.store(3);
+        }
+    }
 #if !defined(__PROSPERO__)
     // Tests sur PC : RHYTHM_TEST=results ouvre directement un écran de résultats factice.
     if (const char *test = getenv("RHYTHM_TEST"); test && std::string(test) == "results") {
@@ -380,6 +400,46 @@ void Game::select(int set, int diff, bool preview) {
         }
     }
     if (preview && (setChanged || previewAudio_ != s->path(ctx.songsDir) + "/" + d->audioFile)) playPreview();
+}
+
+void *Game::introTrackMain(void *self) {
+    Game &g = *static_cast<Game *>(self);
+    const std::string osz = g.introTrackPath_ + ".osz.part";
+    const net::Response r =
+        net::get("https://raw.githubusercontent.com/ppy/osu-resources/master/osu.Game.Resources/Tracks/triangles.osz",
+                 16u << 20);
+    bool ok = r.ok() && fsu::writeFileAtomic(osz, r.body.data(), r.body.size());
+    if (ok) {
+        const std::string tmpDir = g.introTrackPath_ + ".d";
+        std::string error;
+        ok = net::extractOsz(osz, tmpDir, error) && rename((tmpDir + "/audio.mp3").c_str(), g.introTrackPath_.c_str()) == 0;
+        fsu::removeFile(tmpDir + "/audio.mp3");
+        std::vector<fsu::Entry> left;
+        if (fsu::listDir(tmpDir, left))
+            for (const fsu::Entry &e : left) fsu::removeFile(tmpDir + "/" + e.name);
+        rmdir(tmpDir.c_str());
+        if (!ok) LOG("intro: extraction impossible (%s)", error.c_str());
+    } else {
+        LOG("intro: telechargement de la piste impossible (HTTP %d %s)", r.status, r.error.c_str());
+    }
+    fsu::removeFile(osz);
+    g.introTrackState_.store(ok ? 2 : 3);
+    if (ok) LOG("intro: piste triangles installee");
+    return nullptr;
+}
+
+bool Game::playIntroTrack() {
+    if (introTrackState_.load() != 2) return false;
+    if (!music_.load(introTrackPath_)) {
+        introTrackState_.store(3);
+        return false;
+    }
+    previewAudio_ = introTrackPath_;
+    music_.setLoop(false, 0);
+    music_.setVolume(settings_.musicVolume);
+    music_.play(0);
+    introTrackPlaying_ = true;
+    return true;
 }
 
 void Game::playPreview() {
@@ -678,10 +738,21 @@ void Game::frame(const plat::InputState &raw, double now) {
     }
     if (raw.quitRequested) exit_ = true;
 
-    // Battement de la musique en cours (BPM et origine de la difficulté choisie).
-    if (const game::DiffInfo *d = currentDiff(); d && d->bpm > 1 && music_.playing()) {
-        ctx.beatLength = 60000.0 / d->bpm;
-        const double t = music_.time(mixer_) * 1000.0 - d->beatOffset;
+    // Piste du lancement finie (ou remplacée) : on enchaîne sur la map choisie.
+    if (introTrackPlaying_ && music_.path() != introTrackPath_) introTrackPlaying_ = false;
+    if (introTrackPlaying_ && music_.ended()) {
+        introTrackPlaying_ = false;
+        previewAudio_.clear();
+        if (!screen_ || !screen_->gameplay()) playPreview();
+    }
+
+    // Battement de la musique en cours (BPM et origine de la difficulté choisie ;
+    // « triangles » : 160 BPM, premier temps à 3011,74 ms).
+    const game::DiffInfo *beatDiff = introTrackPlaying_ ? nullptr : currentDiff();
+    const double bpm = introTrackPlaying_ ? 160.0 : beatDiff ? beatDiff->bpm : 0;
+    if (bpm > 1 && music_.playing()) {
+        ctx.beatLength = 60000.0 / bpm;
+        const double t = music_.time(mixer_) * 1000.0 - (introTrackPlaying_ ? 3011.74 : beatDiff->beatOffset);
         const double beats = t / ctx.beatLength;
         const long idx = static_cast<long>(std::floor(beats));
         ctx.beatProgress = static_cast<float>(beats - std::floor(beats));

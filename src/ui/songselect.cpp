@@ -699,25 +699,30 @@ private:
         const float tx = cx + 15 * U;
         const std::string title = s.shownTitle(c.settings->originalMetadata);
         const std::string artist = s.shownArtist(c.settings->originalMetadata);
-        text(c, c.fonts->bold, tx, y + 7.5f * U, 22 * U, col::white, title, gfx::Align::Left, kVW - tx - 40 * U, true);
-        text(c, c.fonts->semibold, tx, y + 32 * U, 16 * U, col::white, artist, gfx::Align::Left, kVW - tx - 40 * U, true);
+        // Trois lignes centrées sur leurs capitales : titre, artiste, pastilles.
+        text(c, c.fonts->bold, tx, c.fonts->bold.topForCenter(y + 17 * U, 22 * U), 22 * U, col::white, title, gfx::Align::Left,
+             kVW - tx - 40 * U, true);
+        text(c, c.fonts->semibold, tx, c.fonts->semibold.topForCenter(y + 37 * U, 16 * U), 16 * U, col::white, artist,
+             gfx::Align::Left, kVW - tx - 40 * U, true);
         // Statut (local) et pastilles de difficulté.
-        const float py = y + h - 13 * U - 14 * U;
-        const float sw = c.fonts->bold.measure(12 * U, "LOCALE") + 12 * U;
-        b.roundRect(tx, py, sw, 14 * U, 5 * U, alpha(col::black, 0.55f));
-        c.fonts->bold.drawMid(b, tx + sw / 2, py + 7 * U, 11 * U, pal().content2, "LOCALE", gfx::Align::Center);
+        const float pc = y + h - 14 * U;  // centre de la rangée
+        const float py = pc - 7 * U;
+        const float sw = c.fonts->bold.measure(11 * U, "LOCALE") + 14 * U;
+        b.roundRect(tx, py, sw, 14 * U, 7 * U, alpha(col::black, 0.55f));
+        c.fonts->bold.drawMid(b, tx + sw / 2, pc, 11 * U, pal().content2, "LOCALE", gfx::Align::Center);
         float dx = tx + sw + 5 * U;
-        b.roundRect(dx, py, std::min<size_t>(s.diffs.size(), 12) * 8 * U + 8 * U, 14 * U, 5 * U, alpha(col::black, 0.55f));
+        const size_t shown = std::min<size_t>(s.diffs.size(), 12);
+        b.roundRect(dx, py, static_cast<float>(shown) * 8 * U + 7 * U, 14 * U, 7 * U, alpha(col::black, 0.55f));
         dx += 4 * U;
-        for (size_t d = 0; d < s.diffs.size() && d < 12; ++d) {
+        for (size_t d = 0; d < shown; ++d) {
             const float st = s.diffs[d].stars;
-            b.roundRect(dx, py + 1 * U, 7 * U, 12 * U, 3.5f * U, st >= 0 ? starColor(st) : hex(0x999999));
+            b.roundRect(dx, pc - 5 * U, 7 * U, 10 * U, 3.5f * U, st >= 0 ? starColor(st) : hex(0x999999));
             dx += 8 * U;
         }
         if (s.diffs.size() > 12) {
             char more[16];
             snprintf(more, sizeof(more), "+%zu", s.diffs.size() - 12);
-            c.fonts->semibold.drawMid(b, dx + 4 * U, py + 7 * U, 12 * U, alpha(col::white, 0.7f), more);
+            c.fonts->semibold.drawMid(b, dx + 6 * U, pc, 12 * U, alpha(col::white, 0.7f), more);
         }
     }
 

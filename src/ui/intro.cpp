@@ -38,15 +38,22 @@ public:
         // Au lancement, la console renégocie le mode vidéo (120 Hz) : l'écran reste noir
         // un moment et les premières images sont perdues. On attend que les images
         // s'enchaînent normalement (45 d'affilée) avant de lancer la séquence.
+        // Au premier lancement, la piste « triangles » se télécharge : on l'attend
+        // un peu (6 s au plus), la séquence est calée sur elle.
+        const bool trackPending = game.introTrackState() == 1;
         if (!c.settings->introEnabled) {
-            if (!done_) finish();
+            if (!done_ && (!trackPending || ms(c) - enterAt_ >= 6000)) {
+                game.playIntroTrack();
+                finish();
+            }
             return;
         }
         if (waiting_) {
             stable_ = c.dt > 0 && c.dt < 1.0f / 40 ? stable_ + 1 : 0;
             const double waited = ms(c) - enterAt_;
-            if ((stable_ >= 45 && waited >= 1200) || waited >= 6000) {
+            if ((stable_ >= 45 && waited >= 1200 && !trackPending) || waited >= 6000) {
                 waiting_ = false;
+                game.playIntroTrack();
                 start_ = ms(c);
             } else {
                 start_ = ms(c);
@@ -67,6 +74,8 @@ public:
             // Passer l'intro : on saute directement au flash.
             start_ = ms(c) - 3000;
             cue_ = 8;
+            // La musique saute au même endroit (premier temps, à l'arrivée du logo).
+            if (c.music->playing() && c.music->time(*c.mixer) < 3.0) c.music->play(3.0);
         }
         if (ms(c) - start_ >= 3000 && !done_) finish();
     }

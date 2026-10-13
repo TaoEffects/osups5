@@ -56,17 +56,28 @@ public:
 
     void update(const UiInput &in) override {
         Context &c = game.ctx;
-        const int n = focusCount();
+        const int n = focusCount(), cc = contentCount();
         const int old = focus_;
-        if (in.down) focus_ = std::min(n - 1, focus_ + 1);
-        if (in.up) focus_ = std::max(0, focus_ - 1);
+        const bool footer = focus_ >= cc;
+        // Navigation spatiale : le contenu en haut, « Précédent / Suivant » en bas.
+        if (in.down && !footer) focus_ = (horizontal() || focus_ == cc - 1) ? n - 1 : focus_ + 1;
+        if (in.up) {
+            if (footer && cc > 0) focus_ = horizontal() ? std::clamp(lastContent_, 0, cc - 1) : cc - 1;
+            else if (!footer) focus_ = std::max(0, focus_ - 1);
+        }
+        bool consumed = false;
+        if (footer && (in.left || in.right)) {
+            focus_ = in.left && step_ > 0 ? n - 2 : n - 1;
+            consumed = true;
+        }
+        if (focus_ < cc) lastContent_ = focus_;
         if (focus_ != old) c.play(c.sfx->uiHover, 0.6f);
-        if (in.r1) next();
+        if (in.r1 || in.options) next();
         if (in.l1 || in.back) prev();
         // Souris : survol et clic sur les éléments mémorisés au dernier rendu.
         for (size_t i = 0; i < hits_.size(); ++i) {
             const Hit &h = hits_[i];
-            if (in.hover(h.x, h.y, h.w, h.h)) {
+            if (in.mouseActive && in.hover(h.x, h.y, h.w, h.h)) {
                 if (in.mouseMoved && focus_ != h.id) focus_ = h.id;
                 if (in.mouseClick) {
                     focus_ = h.id;
@@ -75,8 +86,8 @@ public:
                 }
             }
         }
-        if (in.left) activate(-1);
-        if (in.right) activate(+1);
+        if (!consumed && in.left) activate(-1);
+        if (!consumed && in.right) activate(+1);
         if (in.confirm) activate(0);
     }
 
@@ -119,7 +130,7 @@ public:
         if (step_ > 0) footerButton(cx, by, 200 * U, "Précédent", pal().background2, n - 2);
         footerButton(cx + cw - 220 * U, by, 220 * U, step_ == Done ? "Terminer" : "Suivant", col::purple1, n - 1);
         c.fonts->regular.drawMid(b, cx + cw / 2 + (step_ > 0 ? 40 * U : -60 * U), by + 25 * U, 13 * U, pal().light4,
-                                 "L1 / R1 : étape précédente / suivante", gfx::Align::Center);
+                                 "Croix : valider  ·  L1 / R1 : étapes", gfx::Align::Center);
         b.popTransform();
     }
 
@@ -149,6 +160,8 @@ private:
         }
     }
     int focusCount() const { return contentCount() + 2; }
+    // Étapes dont les choix sont côte à côte (gauche / droite pour passer de l'un à l'autre).
+    bool horizontal() const { return step_ == Controls; }
 
     void goStep(int s) {
         Context &c = game.ctx;
@@ -158,6 +171,11 @@ private:
         contentX_.fromTo(t, 40 * U * static_cast<float>(dir), 0, 400, Ease::OutQuint);
         contentA_.fromTo(t, 0, 1, 300, Ease::OutQuint);
         focus_ = contentCount() > 0 ? 0 : focusCount() - 1;
+        lastContent_ = 0;
+        if (step_ == Controls) {
+            const int mode = c.settings->inputMode;
+            focus_ = lastContent_ = mode == 1 ? 0 : mode == 2 ? 1 : 2;
+        }
     }
 
     void next() {
@@ -195,6 +213,7 @@ private:
             if (dir != 0) return;
             if (focus_ == 0) startDownloads(true);
             else startDownloads(false);
+            focus_ = focus_ == 0 ? 1 : focusCount() - 1;  // on enchaîne sur le choix suivant
             break;
         case Controls:
             if (dir != 0) {
@@ -207,6 +226,8 @@ private:
             s.mouseButtonsInGame = s.inputMode != 1;
             if (s.inputMode == 1 && !s.touchpadAbsolute) s.touchpadAbsolute = true;
             c.play(c.sfx->uiSelect, 0.8f);
+            lastContent_ = focus_;
+            focus_ = focusCount() - 1;  // choix fait : « Suivant » prend le focus
             break;
         case Interface: {
             const int d = dir == 0 ? 1 : dir;
@@ -397,7 +418,7 @@ private:
         }
     }
 
-    int step_ = 0, focus_ = 0;
+    int step_ = 0, focus_ = 0, lastContent_ = 0;
     std::vector<Hit> hits_;
     std::vector<std::shared_ptr<net::DownloadState>> tutorial_, bundled_;
     Tween panelA_{0}, panelY_{0}, contentX_{0}, contentA_{1};

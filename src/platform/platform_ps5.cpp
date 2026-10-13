@@ -2,7 +2,7 @@
 // Plateforme PS5 (application native en dossier, lancée comme un titre installé).
 //  - vidéo : EGL + OpenGL 3.3 core du SDK ps5-opengl (Mesa sur le vrai GPU) ;
 //  - manette : ScePad (lecture de l'état courant à chaque image) ;
-//  - clavier USB : SceKeyboard ;
+//  - clavier et souris USB : SceKeyboard / SceMouse, chargés à la demande ;
 //  - audio : SceAudioOut, 48 kHz, thread dédié qui bloque sur sceAudioOutOutput.
 // Les structures Sony ci-dessous reprennent celles du fork SDL de ps5-payload-dev
 // (src/joystick/ps5/SDL_ps5joystick.h, src/video/ps5/SDL_ps5keyboard.c), déjà
@@ -94,6 +94,22 @@ struct SonyKeyboardData {
 static_assert(offsetof(SonyKeyboardData, modifiers) == 28, "offset modificateurs clavier");
 static_assert(offsetof(SonyKeyboardData, scankey) == 32, "offset touches clavier");
 
+// SceMouseData (identique PS4/PS5) : déplacements relatifs depuis la lecture précédente.
+struct SonyMouseData {
+    uint64_t timestamp;
+    uint8_t connected;
+    uint32_t buttons;   // 1 gauche, 2 droit, 4 milieu
+    int32_t x, y;
+    int32_t wheel;
+    int32_t tilt;
+    uint8_t reserved[8];
+};
+static_assert(sizeof(SonyMouseData) == 40, "taille de l'etat souris");
+struct SonyMouseOpenParam {
+    uint8_t behaviorFlag;
+    uint8_t reserved[7];
+};
+
 struct SonyNotification {
     uint8_t reserved[45];
     char message[3075];
@@ -102,10 +118,6 @@ struct SonyNotification {
 constexpr int kAudioPortMain = 0;
 constexpr int kAudioFormatS16Stereo = 1;
 constexpr int kUserSystem = 0xFF;
-
-#ifndef RHYTHM_PS5_KEYBOARD
-#define RHYTHM_PS5_KEYBOARD 0
-#endif
 
 }  // namespace
 
@@ -117,10 +129,8 @@ int scePadOpen(int user, int type, int index, const void *param);
 int scePadReadState(int handle, SonyPadData *data);
 int scePadSetLightBar(int handle, const SonyPadColor *color);
 int scePadClose(int handle);
-int sceKeyboardInit(void);
-int sceKeyboardOpen(int user, int type, int index, void *param);
-int sceKeyboardReadState(int handle, SonyKeyboardData *data);
-int sceKeyboardClose(int handle);
+int sceKernelLoadStartModule(const char *path, size_t argc, const void *argv, uint32_t flags, void *opt, int *res);
+int sceKernelDlsym(int handle, const char *symbol, void **address);
 int sceAudioOutInit(void);
 int sceAudioOutOpen(int user, int type, int index, uint32_t len, uint32_t freq, uint32_t param);
 int sceAudioOutOutput(int handle, const void *data);
@@ -145,7 +155,90 @@ bool g_refreshQueried = false;
 int g_user = -1;
 int g_pad = -1;
 int g_keyboard = -1;
-double g_nextPadRetry = 0;
+int g_mouse = -1;
+float g_mouseX = 960, g_mouseY = 540;
+double g_nextPadRetry = 0, g_nextMouseRetry = 0;
+bool g_mouseWasConnected = false, g_keyboardWasConnected = false;
+
+// Modules système qui ne sont pas chargés d'office dans le processus : un appel
+// direct par la table d'imports saute à l'adresse 0 (plantage de la touche Carré
+// du 13/10). On les charge donc nous-mêmes et on résout chaque fonction ; si
+// quelque chose manque, la fonction est simplement indisponible.
+int loadSystemModule(const char *name) {
+    static const char *const dirs[] = {"/system/common/lib/", "/system/priv/lib/"};
+    for (const char *dir : dirs) {
+        char path[160];
+        std::snprintf(path, sizeof(path), "%s%s", dir, name);
+        const int h = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, nullptr);
+        LOG("ps5: module %s -> 0x%08x", path, static_cast<unsigned>(h));
+        if (h >= 0) return h;
+    }
+    return -1;
+}
+
+template <class F>
+bool resolve(int module, const char *symbol, F &fn) {
+    void *address = nullptr;
+    if (module < 0 || sceKernelDlsym(module, symbol, &address) != 0 || !address) {
+        LOG("ps5: symbole %s introuvable", symbol);
+        fn = nullptr;
+        return false;
+    }
+    fn = reinterpret_cast<F>(address);
+    return true;
+}
+
+struct KeyboardApi {
+    int (*init)() = nullptr;
+    int (*open)(int, int, int, void *) = nullptr;
+    int (*read)(int, SonyKeyboardData *) = nullptr;
+    int (*close)(int) = nullptr;
+} g_kb;
+
+struct MouseApi {
+    int (*init)() = nullptr;
+    int (*open)(int, int, int, SonyMouseOpenParam *) = nullptr;
+    int (*read)(int, SonyMouseData *, int) = nullptr;
+    int (*close)(int) = nullptr;
+} g_ms;
+
+// Garde-fou : si l'initialisation du clavier/souris a planté au lancement
+// précédent, le fichier témoin est resté ; on saute alors cette étape une fois.
+constexpr const char *kInputMarker = "/download0/usb-input.pending";
+
+void openMouse() {
+    if (!g_ms.open || g_user < 0) return;
+    SonyMouseOpenParam param{};
+    g_mouse = g_ms.open(g_user, 0, 0, &param);
+    LOG("ps5: sceMouseOpen = 0x%08x", static_cast<unsigned>(g_mouse));
+}
+
+void initUsbInput() {
+    if (FILE *f = std::fopen(kInputMarker, "rb")) {
+        std::fclose(f);
+        std::remove(kInputMarker);
+        LOG("ps5: l'init clavier/souris a plante au lancement precedent : ignoree cette fois");
+        return;
+    }
+    if (FILE *f = std::fopen(kInputMarker, "wb")) std::fclose(f);
+    const int kb = loadSystemModule("libSceKeyboard.sprx");
+    if (resolve(kb, "sceKeyboardInit", g_kb.init) && resolve(kb, "sceKeyboardOpen", g_kb.open) &&
+        resolve(kb, "sceKeyboardReadState", g_kb.read) && resolve(kb, "sceKeyboardClose", g_kb.close)) {
+        LOG("ps5: sceKeyboardInit = 0x%08x", static_cast<unsigned>(g_kb.init()));
+        int junk = 0;
+        g_keyboard = g_kb.open(g_user, 0, 0, &junk);
+        LOG("ps5: sceKeyboardOpen = 0x%08x", static_cast<unsigned>(g_keyboard));
+    }
+    const int ms = loadSystemModule("libSceMouse.sprx");
+    if (resolve(ms, "sceMouseInit", g_ms.init) && resolve(ms, "sceMouseOpen", g_ms.open) &&
+        resolve(ms, "sceMouseRead", g_ms.read) && resolve(ms, "sceMouseClose", g_ms.close)) {
+        LOG("ps5: sceMouseInit = 0x%08x", static_cast<unsigned>(g_ms.init()));
+        openMouse();
+    } else {
+        g_ms = MouseApi{};
+    }
+    std::remove(kInputMarker);
+}
 bool g_padWasConnected = false;
 uint16_t g_touchMaxX = 0, g_touchMaxY = 0;
 
@@ -220,20 +313,7 @@ bool init(const InitParams &params) {
     r = scePadInit();
     LOG("ps5: scePadInit = 0x%08x", static_cast<unsigned>(r));
     openPad();
-#if RHYTHM_PS5_KEYBOARD
-    // Désactivé par défaut : premier suspect du plantage du test du 13/10 (12.70).
-    LOG("ps5: -> sceKeyboardInit");
-    r = sceKeyboardInit();
-    LOG("ps5: <- sceKeyboardInit = 0x%08x", static_cast<unsigned>(r));
-    {
-        static uint8_t param[256] = {};  // taille inconnue : tampon large plutôt qu'un int
-        LOG("ps5: -> sceKeyboardOpen");
-        g_keyboard = sceKeyboardOpen(g_user, 0, 0, param);
-        LOG("ps5: <- sceKeyboardOpen = %d", g_keyboard);
-    }
-#else
-    LOG("ps5: clavier USB desactive dans cette build (RHYTHM_PS5_KEYBOARD=0)");
-#endif
+    initUsbInput();
     thr::logStackInfo("principal (apres entrees)");
     LOG("ps5: -> EGL");
 
@@ -278,8 +358,9 @@ bool init(const InitParams &params) {
 void shutdown() {
     audioStop();
     if (g_pad >= 0) scePadClose(g_pad);
-    if (g_keyboard >= 0) sceKeyboardClose(g_keyboard);
-    g_pad = g_keyboard = -1;
+    if (g_keyboard >= 0 && g_kb.close) g_kb.close(g_keyboard);
+    if (g_mouse >= 0 && g_ms.close) g_ms.close(g_mouse);
+    g_pad = g_keyboard = g_mouse = -1;
     if (g_display != EGL_NO_DISPLAY) {
         eglMakeCurrent(g_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         if (g_context != EGL_NO_CONTEXT) eglDestroyContext(g_display, g_context);
@@ -366,9 +447,14 @@ void pollInput(InputState &out) {
 
     KeyboardState &k = out.keyboard;
     k = KeyboardState{};
-    if (g_keyboard >= 0) {
+    if (g_keyboard >= 0 && g_kb.read) {
         SonyKeyboardData d{};
-        if (sceKeyboardReadState(g_keyboard, &d) == 0 && d.available) {
+        const bool ok = g_kb.read(g_keyboard, &d) == 0 && d.available;
+        if (ok != g_keyboardWasConnected) {
+            LOG("ps5: clavier %s", ok ? "connecte" : "deconnecte");
+            g_keyboardWasConnected = ok;
+        }
+        if (ok) {
             k.connected = true;
             for (uint16_t code : d.scankey)
                 if (code > 0 && code < 256) k.keys[code] = true;
@@ -376,7 +462,42 @@ void pollInput(InputState &out) {
                 if (d.modifiers & (1u << bit)) k.keys[0xE0 + bit] = true;
         }
     }
-    out.mouse = MouseState{};  // pas de bouchon libSceMouse dans le SDK public (étape 3)
+    MouseState &m = out.mouse;
+    m = MouseState{};
+    if (g_ms.read && g_mouse < 0 && nowSeconds() >= g_nextMouseRetry) {
+        g_nextMouseRetry = nowSeconds() + 2.0;
+        openMouse();
+    }
+    if (g_mouse >= 0 && g_ms.read) {
+        SonyMouseData data[16];
+        std::memset(data, 0, sizeof(data));
+        const int n = g_ms.read(g_mouse, data, 16);
+        bool connected = g_mouseWasConnected;
+        // Vitesse : 1 compte = 1 pixel en 1080p, proportionnel au-delà.
+        const float speed = g_height > 0 ? g_height / 1080.0f : 1.0f;
+        static uint32_t buttons = 0;
+        for (int i = 0; i < n && i < 16; ++i) {
+            connected = data[i].connected != 0;
+            if (!connected) continue;
+            g_mouseX += data[i].x * speed;
+            g_mouseY += data[i].y * speed;
+            m.wheel += static_cast<float>(data[i].wheel);
+            buttons = data[i].buttons;
+        }
+        if (n < 0) connected = false;
+        if (connected != g_mouseWasConnected) {
+            LOG("ps5: souris %s", connected ? "connectee" : "deconnectee");
+            g_mouseWasConnected = connected;
+        }
+        const float w = static_cast<float>(g_width > 0 ? g_width : 1920);
+        const float h = static_cast<float>(g_height > 0 ? g_height : 1080);
+        g_mouseX = g_mouseX < 0 ? 0 : (g_mouseX > w - 1 ? w - 1 : g_mouseX);
+        g_mouseY = g_mouseY < 0 ? 0 : (g_mouseY > h - 1 ? h - 1 : g_mouseY);
+        m.connected = connected;
+        m.x = g_mouseX;
+        m.y = g_mouseY;
+        m.buttons = connected ? (buttons & 7u) : 0;
+    }
     out.quitRequested = g_exitRequested;
 }
 
@@ -452,12 +573,26 @@ struct SceImeDialogResult {
     int8_t reserved[12];
 };
 }  // namespace
-extern "C" int sceImeDialogInit(const SceImeDialogParam *, void *);
-extern "C" int sceImeDialogGetStatus(void);
-extern "C" int sceImeDialogGetResult(SceImeDialogResult *);
-extern "C" int sceImeDialogTerm(void);
-
 namespace {
+struct ImeApi {
+    int (*init)(const SceImeDialogParam *, void *) = nullptr;
+    int (*status)() = nullptr;
+    int (*result)(SceImeDialogResult *) = nullptr;
+    int (*term)() = nullptr;
+    bool tried = false;
+} g_ime;
+
+bool loadIme() {
+    if (!g_ime.tried) {
+        g_ime.tried = true;
+        const int h = loadSystemModule("libSceImeDialog.sprx");
+        if (!(resolve(h, "sceImeDialogInit", g_ime.init) && resolve(h, "sceImeDialogGetStatus", g_ime.status) &&
+              resolve(h, "sceImeDialogGetResult", g_ime.result) && resolve(h, "sceImeDialogTerm", g_ime.term)))
+            g_ime.init = nullptr;
+    }
+    return g_ime.init != nullptr;
+}
+
 char16_t g_imeText[256];
 char16_t g_imeTitle[128];
 bool g_imeOpen = false;
@@ -514,6 +649,10 @@ bool textInputSupported() { return true; }
 
 bool startTextInput(const char *title, const std::string &initial) {
     if (g_imeOpen) return false;
+    if (!loadIme()) {
+        LOG("ps5: clavier virtuel indisponible");
+        return false;
+    }
     toUtf16(initial, g_imeText, sizeof(g_imeText) / sizeof(g_imeText[0]));
     toUtf16(title ? title : "", g_imeTitle, sizeof(g_imeTitle) / sizeof(g_imeTitle[0]));
     SceImeDialogParam p;
@@ -527,7 +666,7 @@ bool startTextInput(const char *title, const std::string &initial) {
     p.posy = 540;
     p.halign = 1;
     p.valign = 1;
-    const int r = sceImeDialogInit(&p, nullptr);
+    const int r = g_ime.init(&p, nullptr);
     LOG("ps5: clavier virtuel -> 0x%x", r);
     g_imeOpen = r == 0;
     return g_imeOpen;
@@ -535,12 +674,12 @@ bool startTextInput(const char *title, const std::string &initial) {
 
 int pollTextInput(std::string &out) {
     if (!g_imeOpen) return 0;
-    const int status = sceImeDialogGetStatus();
+    const int status = g_ime.status();
     if (status != 2) return 0;  // 1 en cours, 2 terminé
     SceImeDialogResult result;
     std::memset(&result, 0, sizeof(result));
-    sceImeDialogGetResult(&result);
-    sceImeDialogTerm();
+    g_ime.result(&result);
+    g_ime.term();
     g_imeOpen = false;
     if (result.outcome != 0) return -1;
     out = fromUtf16(g_imeText);

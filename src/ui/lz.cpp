@@ -399,20 +399,30 @@ void Logo::update(Context &c, const UiInput &in) {
     const float targetVel = c.trackRunning ? 0.5f * (c.kiai ? 4 : 2) : 0.5f;
     triVelocity_ = anim::lerp(targetVel, triVelocity_, std::pow(0.995f, dtMs));
 
-    // Visualiseur : nouvelles amplitudes toutes les 50 ms, décroissance continue.
+    // Visualiseur : nouvelles amplitudes toutes les 50 ms, lissées entre voisines,
+    // puis chaque barre monte en douceur vers sa cible et redescend lentement.
     if (t - lastBarUpdate_ >= 50) {
         lastBarUpdate_ = t;
         const auto spec = c.music->spectrum();
-        for (int i = 0; i < 200; ++i) {
-            // Les graves d'abord ; 64 bandes réparties sur 200 barres.
-            const int src = (i + barOffset_) % 200;
-            const float band = c.trackRunning ? spec[static_cast<size_t>(src * audio::Music::kBands / 200)] : 0;
-            const float target = band * band * 0.55f * (c.kiai ? 1.0f : 0.5f) * 2;
-            bars_[i] = std::max(bars_[i], target);
+        float raw[kLogoBars];
+        for (int i = 0; i < kLogoBars; ++i) {
+            const int src = (i + barOffset_) % kLogoBars;
+            const float band = c.trackRunning ? spec[static_cast<size_t>(src * audio::Music::kBands / kLogoBars)] : 0;
+            raw[i] = band * band * 0.55f * (c.kiai ? 1.0f : 0.5f) * 2;
         }
-        barOffset_ = (barOffset_ + 5) % 200;
+        for (int i = 0; i < kLogoBars; ++i) {
+            const float l = raw[(i + kLogoBars - 1) % kLogoBars], r = raw[(i + 1) % kLogoBars];
+            barTarget_[i] = std::max(barTarget_[i], raw[i] * 0.5f + (l + r) * 0.25f);
+        }
+        barOffset_ = (barOffset_ + 2) % kLogoBars;
     }
-    for (float &v : bars_) v = std::max(0.0f, v - dtMs * 0.0024f * (v + 0.03f));
+    const float rise = 1 - std::pow(0.982f, dtMs);
+    for (int i = 0; i < kLogoBars; ++i) {
+        float &v = bars_[i];
+        if (barTarget_[i] > v) v += (barTarget_[i] - v) * rise;
+        v = std::max(0.0f, v - dtMs * 0.0016f * (v + 0.03f));
+        barTarget_[i] = std::max(0.0f, barTarget_[i] - dtMs * 0.0016f * (barTarget_[i] + 0.03f));
+    }
 }
 
 void Logo::draw(Context &c) {
@@ -426,17 +436,18 @@ void Logo::draw(Context &c) {
     const float R = D * 0.5f;
     const float full = 256 * U * s;  // rayon du sprite complet (512 u)
 
-    // Visualiseur : 5 tours de 200 barres partant du bord.
+    // Visualiseur : 2 tours de barres partant du bord (moins nombreuses et plus
+    // larges que lazer, pour un rendu plus doux).
     if (visualiser) {
         b.setBlend(gfx::Blend::Additive);
-        const float bw = D * 0.0157f;
-        const uint32_t barCol = alpha(col::white, 0.2f * 0.5f * a);
-        for (int j = 0; j < 5; ++j)
-            for (int i = 0; i < 200; ++i) {
+        const float bw = D * 0.018f;
+        const uint32_t barCol = alpha(col::white, 0.13f * a);
+        for (int j = 0; j < 2; ++j)
+            for (int i = 0; i < kLogoBars; ++i) {
                 const float amp = bars_[i];
                 if (amp < 1.0f / 600) continue;
                 const float len = 600 * U * amp * scale.at(t);
-                const float ang = (static_cast<float>(i) / 200 * 360 + static_cast<float>(j) * 72) * anim::kPi / 180;
+                const float ang = (static_cast<float>(i) / kLogoBars * 360 + static_cast<float>(j) * 180) * anim::kPi / 180;
                 const float mid = R + len * 0.5f;
                 b.rotated(b.white(), px + std::cos(ang) * mid, py + std::sin(ang) * mid, len, bw, ang, barCol);
             }

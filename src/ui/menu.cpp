@@ -79,6 +79,15 @@ public:
             slide_.fromTo(t, -800 * U, 0, 300, Ease::OutQuint);
             game.logo.opacity.go(t, 1, 300, Ease::OutQuint);
         } else {
+            // Arrivée depuis l'assistant (ou tout écran qui a masqué le logo) :
+            // le logo revient au centre avant l'état initial.
+            Logo &logo = game.logo;
+            if (logo.opacity.target() < 0.99f) {
+                logo.x.snap(kVW / 2);
+                logo.y.snap(kVH / 2);
+                logo.scale.fromTo(t, 0.7f, 1, 800, Ease::OutElasticHalf);
+                logo.opacity.go(t, 1, 400, Ease::OutQuint);
+            }
             setState(State::Initial, true);
         }
         if (!c.music->playing() && !c.library->scanning()) game.playPreview();
@@ -151,9 +160,13 @@ public:
                 }
             }
             // Au rythme, l'icône survolée sautille.
-            if (h && c.trackRunning && c.beatIndexEarly != b.lastBeat) {
+            // Sur un morceau rapide, on saute des temps pour garder au moins ~600 ms
+            // par mouvement (sinon l'icône s'agite trop vite).
+            int every = 1;
+            while (c.beatLength * every < 600 && every < 8) every *= 2;
+            if (h && c.trackRunning && c.beatIndexEarly != b.lastBeat && c.beatIndexEarly % every == 0) {
                 b.lastBeat = c.beatIndexEarly;
-                const double d = c.beatLength / 2;
+                const double d = c.beatLength * every / 2;
                 b.beatSide = -b.beatSide;
                 // À chaque temps : bascule de ±8° (2d, InOutSine), saut de 10 u puis retour,
                 // étirement 1,2 au sommet puis 1,2 x 1,08 (comme MainMenuButton de lazer).

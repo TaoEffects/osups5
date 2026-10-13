@@ -3,11 +3,14 @@
 // musique d'aperçu et scores locaux.
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <pthread.h>
 
 #include "app/context.h"
 #include "game/library.h"
@@ -107,6 +110,11 @@ public:
     const UiInput &input() const { return lastInput_; }
     // Aperçu musical : boucle à partir du PreviewTime.
     void playPreview();
+    // Piste du lancement (« triangles » de cYsmix, ressources de lazer) :
+    // téléchargée une fois puis jouée à chaque démarrage. 0 absente, 1 en cours,
+    // 2 prête, 3 échec.
+    int introTrackState() const { return introTrackState_.load(); }
+    bool playIntroTrack();
 
     // Scores locaux.
     std::vector<LocalScore> scoresFor(const std::string &key) const;
@@ -135,6 +143,12 @@ private:
     game::Library library_;
     game::Skin skin_;
     std::string skinsDir_, soundsDir_;
+    std::string introTrackPath_;
+    std::atomic<int> introTrackState_{0};
+    bool introTrackPlaying_ = false;
+    pthread_t introTrackThread_{};
+    bool introTrackThreadStarted_ = false;
+    static void *introTrackMain(void *self);
     gfx::ImageLoader images_;
     bool audioOk_ = false;
 

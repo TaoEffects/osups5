@@ -77,7 +77,7 @@ chaque appel `glDraw*` coûte du CPU : on reste donc économe.
 | Périphérique | API | État |
 |---|---|---|
 | Manette DualSense | `scePadOpen/ReadState` | ✅ branché (sticks, gâchettes analogiques, pavé tactile 2 doigts, barre lumineuse) |
-| Clavier USB | `sceKeyboardOpen/ReadState` | ✅ branché (codes HID, comme SDL) |
+| Clavier / souris USB | `libSceKeyboard` / `libSceMouse` chargés à la demande (sceKernelLoadStartModule + dlsym) | ✅ branché, à confirmer sur console |
 | Souris USB | `libSceMouse` | ❌ **aucun bouchon dans le SDK public**. Les bouchons ne sont que des noms de fonctions : on peut en écrire un (`sceMouseInit/Open/Read`), reste à vérifier que le module se charge dans une appli native. Étape 3. |
 | Tablette | — | Si elle se présente comme une souris, même chemin que la souris. Pas d'API HID brute publique repérée. |
 

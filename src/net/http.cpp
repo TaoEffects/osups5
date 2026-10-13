@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/http.h"
 
+#include <mutex>
+
 #include <cstdio>
 
 #include "core/log.h"
@@ -43,6 +45,8 @@ int g_pool = -1, g_ssl = -1, g_http = -1, g_tmpl = -1;
 }  // namespace
 
 bool init() {
+    static std::mutex initMutex;  // plusieurs threads (miroir, piste d'intro) peuvent arriver ensemble
+    std::lock_guard<std::mutex> lock(initMutex);
     if (g_tmpl >= 0) return true;
     g_pool = sceNetPoolCreate("rhythm_net", kNetPool, 0);
     if (g_pool < 0) {

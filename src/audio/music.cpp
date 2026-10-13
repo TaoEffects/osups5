@@ -52,11 +52,30 @@ public:
         toStereo(tmp_.data(), static_cast<int>(mp3_.channels), n, stereo);
         return n;
     }
-    bool seek(uint64_t frame) override { return drmp3_seek_to_pcm_frame(&mp3_, frame); }
+    bool seek(uint64_t frame) override {
+        // Sans table, dr_mp3 décode tout depuis le début jusqu'à la cible (des
+        // secondes pour un aperçu en milieu de morceau). La table ne lit que les
+        // en-têtes de trames : calculée une fois, au premier saut, dans le thread
+        // de décodage.
+        if (!seekTableReady_ && frame > 0) {
+            seekTableReady_ = true;
+            drmp3_uint32 count = 512;
+            seekPoints_.resize(count);
+            if (drmp3_calculate_seek_points(&mp3_, &count, seekPoints_.data()) && count > 0) {
+                seekPoints_.resize(count);
+                drmp3_bind_seek_table(&mp3_, count, seekPoints_.data());
+            } else {
+                seekPoints_.clear();
+            }
+        }
+        return drmp3_seek_to_pcm_frame(&mp3_, frame);
+    }
 
 private:
     std::shared_ptr<std::vector<uint8_t>> data_;
     drmp3 mp3_{};
+    std::vector<drmp3_seek_point> seekPoints_;
+    bool seekTableReady_ = false;
     bool ok_ = false;
     std::vector<float> tmp_;
 };
@@ -358,13 +377,22 @@ void Music::decodeLoop() {
     while (threadRun_.load()) {
         bool seekNow = false;
         size_t space = 0;
+        // Le saut lui-même se fait hors verrou : il peut prendre du temps et ne
+        // doit bloquer ni le thread audio ni l'interface (play(), setRate()...).
+        int64_t seekWanted = INT64_MIN;
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            seekWanted = pendingSeek_;
+        }
+        if (seekWanted != INT64_MIN) {
+            const int64_t target = seekWanted < 0 ? 0 : seekWanted;
+            decoder_->seek(static_cast<uint64_t>(static_cast<double>(target) * decoder_->rate / kRate));
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (pendingSeek_ != INT64_MIN && pendingSeek_ != seekWanted) continue;  // nouvel ordre entre-temps
             if (pendingSeek_ != INT64_MIN) {
                 const int64_t seekTarget = pendingSeek_ < 0 ? 0 : pendingSeek_;
-                const uint64_t srcFrame =
-                    static_cast<uint64_t>(static_cast<double>(seekTarget) * decoder_->rate / kRate);
-                decoder_->seek(srcFrame);
                 ringCount_ = 0;
                 ringRead_ = 0;
                 ringStartPos_ = seekTarget;
