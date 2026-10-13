@@ -1,4 +1,4 @@
-# Tester sur la PS5 (étape 1)
+# Tester sur la PS5
 
 But du test : vérifier sur ta console que l'appli **démarre**, **affiche**, **joue du
 son**, **lit la manette**, et **renvoie ses logs** au PC. Les plantages étant souvent
@@ -43,21 +43,33 @@ qu'un PC se connecte avant d'initialiser la vidéo : on capte donc aussi un plan
 pendant l'init graphique. Les logs sont enregistrés dans `logs/<date>.log`.
 L'appli affiche aussi une notification avec son IP et le port (9025).
 
-## 3. Tester (étape 2)
+## 3. Tester (étape 3 : interface façon lazer)
 
-1. **Menu** : le logo bat au rythme de la musique. Croix pour ouvrir la barre de boutons.
-2. **Télécharger des maps** : choisis-en 2 ou 3 (Croix), attends « Installée ✓ ».
-   L1/R1 change d'onglet (Populaires / Récentes / Favorites), L2/R2 change de page.
-3. **Jouer** : choisis une map, Croix pour lancer. Carré ouvre les mods (essaie « Auto »
-   pour regarder la map se jouer toute seule).
-4. En jeu : **frapper** avec Croix, Carré, Rond, L1, R1, L2, R2 ; **viser** au stick gauche
-   (stick droit = précis) ou au pavé tactile ; **spinners** : fais tourner le stick gauche.
-   **Options** (ou Échap) = pause. **Triangle** = passer l'intro.
-5. **Options** : essaie le **120 Hz** (puis relance l'appli), le volume, le pavé tactile.
-6. **Plantage volontaire** : il n'existe plus dans cette version.
+1. **Intro** : « bienvenue sur rhythm », triangles, icônes, grand triangle, flash blanc.
+   N'importe quelle touche la passe.
+2. **Premier lancement** (une seule fois) : l'écran « configuration initiale » télécharge
+   le tutoriel et 20 maps de base. Tu peux continuer (Croix) pendant que ça télécharge.
+3. **Menu** : Croix (ou clic sur le logo) ouvre la bande de boutons. Gauche/droite pour
+   choisir, Croix pour valider, Rond pour revenir au logo seul.
+4. **Sélection de map** : haut/bas = difficultés et maps, gauche/droite = map
+   précédente/suivante, L1/R1 = saut de 8, L2/R2 = début/fin, **Carré = mods**,
+   Triangle = au hasard, Options = réglages, Croix (ou clic sur le logo en bas à droite)
+   = jouer. Dans les mods : **DT** (accéléré, même hauteur), NC, HT, EZ, NF, HR, HD, Auto.
+5. **Chargement** : le logo et les infos de la map, puis la partie démarre seule.
+6. **En jeu** : comme avant. **Options** = pause (Continuer / Recommencer / Quitter).
+7. **Résultats** : l'anneau de précision se remplit, la lettre de rang apparaît.
+   Carré = rejouer, Triangle = corriger le décalage (si proposé), Rond = retour.
+8. **Options** (bouton du menu ou Options) : panneau à gauche, L1/R1 = sections.
+   Essaie **Style de jeu** : « Épuré » (façon WhiteCat) ou « Triangles » (façon lazer).
+9. **Télécharger** (bouton du menu ou icône en haut à droite) : L1/R1 = tri,
+   L2/R2 = page, Croix = télécharger.
 
-Clavier/souris (PC) : flèches + Entrée/Échap, Z/X pour frapper, souris pour viser et
-cliquer partout, molette pour défiler, F1 mods, F2 hasard, F3 options, Espace passer.
+Clavier/souris (PC) : flèches + Entrée/Échap, Z/X pour frapper, souris partout, molette,
+F1 mods, F2 hasard, F3 options, Espace passer.
+
+**Sons personnels** : dépose des fichiers au nom des sons d'un skin osu!
+(`normal-hitnormal.wav`, `soft-hitclap.ogg`, `menuback.wav`, `click-short.wav`…) dans
+`/data/rhythm-ps5/sons/` (FTP) : ils remplacent les sons synthétisés au prochain lancement.
 
 ## 4. Ce qu'il faut me renvoyer
 

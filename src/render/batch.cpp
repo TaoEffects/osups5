@@ -178,6 +178,17 @@ bool MsaaTarget::create(int w, int h, int s) {
     const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && glGetError() == GL_NO_ERROR;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     if (!ok) {
+        // Repli : sans stencil (les masques ne découperont plus, le reste marche).
+        glDeleteRenderbuffers(1, &stencil);
+        stencil = 0;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+        const bool ok2 = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && glGetError() == GL_NO_ERROR;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (ok2) {
+            LOG("gl: MSAA x%d %dx%d actif (sans stencil)", s, w, h);
+            return true;
+        }
         LOG("gl: MSAA x%d %dx%d indisponible", s, w, h);
         destroy();
     } else {

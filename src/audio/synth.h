@@ -2,6 +2,8 @@
 // Sons synthétisés au démarrage : aucun fichier audio officiel n'est distribué.
 #pragma once
 
+#include <string>
+
 #include "audio/mixer.h"
 
 namespace audio {
@@ -20,6 +22,9 @@ struct SoundBank {
     // Interface
     Sample uiHover, uiSelect, uiBack, uiOpen, uiError, uiDownloaded;
     void generate();
+    // Remplace les sons par ceux trouvés dans `dir` (noms des skins osu! :
+    // normal-hitnormal.wav, soft-hitclap.ogg, menuback.wav...). Renvoie le nombre chargé.
+    int loadOverrides(const std::string &dir);
 };
 
 }  // namespace audio

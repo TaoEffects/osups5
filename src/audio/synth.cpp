@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "audio/synth.h"
 
+#include <initializer_list>
+#include <vector>
+
+#include "audio/music.h"
+#include "core/log.h"
+
 #include <cmath>
 #include <cstdint>
 
@@ -109,6 +115,40 @@ void SoundBank::generate() {
         const float f = t < 0.1f ? 784.0f : (t < 0.2f ? 988.0f : 1175.0f);
         return 0.2f * std::sin(kTwoPi * f * t) * std::exp(-t * 6.0f);
     });
+}
+
+int SoundBank::loadOverrides(const std::string &dir) {
+    int loaded = 0;
+    auto tryLoad = [&](Sample &target, std::initializer_list<const char *> names) {
+        for (const char *name : names)
+            for (const char *ext : {".wav", ".ogg", ".mp3"}) {
+                std::vector<float> data;
+                if (decodeWholeFile(dir + "/" + name + ext, data) && !data.empty()) {
+                    target.stereo = std::move(data);
+                    ++loaded;
+                    return;
+                }
+            }
+    };
+    const char *sets[3] = {"normal", "soft", "drum"};
+    const char *kinds[4] = {"hitnormal", "hitwhistle", "hitfinish", "hitclap"};
+    for (int s = 0; s < 3; ++s)
+        for (int k = 0; k < 4; ++k) {
+            const std::string name = std::string(sets[s]) + "-" + kinds[k];
+            tryLoad(hit[s][k], {name.c_str()});
+        }
+    tryLoad(sliderTick, {"normal-slidertick"});
+    tryLoad(sliderSlide, {"normal-sliderslide"});
+    tryLoad(spinnerBonus, {"spinnerbonus"});
+    tryLoad(comboBreak, {"combobreak"});
+    tryLoad(uiHover, {"click-short", "menuclick"});
+    tryLoad(uiSelect, {"click-short-confirm", "menuhit"});
+    tryLoad(uiBack, {"menuback", "back-button-click"});
+    tryLoad(uiOpen, {"menu-play-click", "welcome"});
+    tryLoad(uiError, {"failsound"});
+    tryLoad(uiDownloaded, {"applause", "check-on"});
+    if (loaded) LOG("sons: %d remplaces depuis %s", loaded, dir.c_str());
+    return loaded;
 }
 
 }  // namespace audio

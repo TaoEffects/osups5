@@ -184,6 +184,14 @@ bool Game::init() {
     LOG("game: ressources graphiques pretes (gl 0x%x)", glGetError());
 
     sfx_.generate();
+    // Sons personnels (par ex. ceux d'un skin) déposés dans le dossier « sons », à
+    // côté du dossier des maps (/data/rhythm-ps5/sons sur la console).
+    {
+        const size_t slash = ctx.songsDir.find_last_of('/');
+        const std::string base = slash == std::string::npos ? std::string(".") : ctx.songsDir.substr(0, slash);
+        fsu::makeDirs(base + "/sons");
+        sfx_.loadOverrides(base + "/sons");
+    }
     mixer_.setMusic(&music_);
     audioOk_ = plat::audioStart(audio::Mixer::callback, &mixer_, 256);
     ctx.applyVolumes();
@@ -375,7 +383,7 @@ const gfx::Texture *Game::thumbnail(int setIndex) {
     t.lastUse = ctx.now;
     if (t.tex.id) return &t.tex;
     if (!t.ticket && !t.failed && !s.diffs.empty() && !s.diffs[0].background.empty()) {
-        t.ticket = images_.request(s.path(ctx.songsDir) + "/" + s.diffs[0].background, 480, 0);
+        t.ticket = images_.request(s.path(ctx.songsDir) + "/" + s.diffs[0].background, 960, 0);
         thumbTickets_[t.ticket] = s.folder;
     }
     return nullptr;
