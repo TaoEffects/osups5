@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "app/game.h"
+#include "core/i18n.h"
 #include "core/fsutil.h"
 #include "core/log.h"
 #include "game/library.h"
@@ -217,7 +218,7 @@ public:
         key_ = game.preparedKey;
         const std::string audio = map.folder + "/" + map.audioFile;
         if ((c.music->path() != audio || !c.music->loaded()) && !c.music->load(audio)) {
-            error_ = "Musique introuvable : " + map.audioFile;
+            error_ = i18n::tr("Musique introuvable : ") + map.audioFile;
             return;
         }
         if (!play_.start(c, std::move(map), game.mods, nullptr)) error_ = "Map vide";
@@ -365,10 +366,10 @@ private:
         }
         // Infos (essais, progression).
         char line[96];
-        snprintf(line, sizeof(line), "Essais : %d", game.retryCount + 1);
+        snprintf(line, sizeof(line), i18n::tr("Essais : %d"), game.retryCount + 1);
         const float iy = buttonY(n - 1, n) + 80 * U;
         c.fonts->regular.drawShadow(b, kVW / 2 - 10 * U, iy, 18 * U, col::white, line, gfx::Align::Right);
-        snprintf(line, sizeof(line), "Progression : %.0f%%", play_.progress() * 100);
+        snprintf(line, sizeof(line), i18n::tr("Progression : %.0f%%"), play_.progress() * 100);
         c.fonts->regular.drawShadow(b, kVW / 2 + 10 * U, iy, 18 * U, col::white, line);
         b.popTransform();
     }
@@ -452,7 +453,7 @@ public:
             c.saveSettings();
             offsetApplied_ = true;
             c.play(c.sfx->uiSelect);
-            game.toast("Décalage audio réglé à " + std::to_string(c.settings->offsetMs) + " ms");
+            game.toast(i18n::tr("Décalage audio réglé à ") + std::to_string(c.settings->offsetMs) + " ms");
         }
     }
 
@@ -548,7 +549,7 @@ public:
         b.rect(0, kVH - 50 * U, kVW, 50 * U, hex(0x333333));
         drawBarButton(retryFx_, kVW / 2 - 150 * U, "Rejouer", fa::rotate_right, col::purple1, Pad::Square);
         if (canSuggest()) {
-            snprintf(line, sizeof(line), "Corriger le décalage (%+.0f ms)", r_.meanError);
+            snprintf(line, sizeof(line), i18n::tr("Corriger le décalage (%+.0f ms)"), r_.meanError);
             drawBarButton(offsetFx_, kVW / 2 + 160 * U, line, fa::stopwatch, col::orange1, Pad::Triangle);
         }
         backButton(c, backFx_, 12 * U, kVH - 12 * U, "retour");

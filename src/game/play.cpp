@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "game/play.h"
+#include "core/i18n.h"
 
 #include <algorithm>
 #include <cmath>
@@ -761,7 +762,7 @@ void Play::render(Context &ctx) {
                 b.circle(cx + std::cos(ang) * 225, cy + std::sin(ang) * 225, 9, gfx::withAlpha(gfx::rgba(255, 255, 255), fade));
                 b.circle(cx, cy, 8, gfx::withAlpha(gfx::rgba(255, 255, 255), fade));
                 char rpm[48];
-                snprintf(rpm, sizeof(rpm), "%.0f tr/min", s.rpm);
+                snprintf(rpm, sizeof(rpm), i18n::tr("%.0f tr/min"), s.rpm);
                 ctx.fonts->semibold.draw(b, cx, cy + 290, 26, gfx::withAlpha(gfx::rgba(255, 255, 255), fade * 0.8f), rpm, gfx::Align::Center);
                 if (s.bonusShown > 0 && static_cast<float>(s.bonusShown) > s.required) {
                     snprintf(rpm, sizeof(rpm), "+%d", (s.bonusShown - static_cast<int>(s.required)) * 1000);
@@ -779,7 +780,7 @@ void Play::render(Context &ctx) {
             }
             b.centered(ctx.tex->ring, cx, cy, 30 + 600 * remain, gfx::withAlpha(gfx::rgba(255, 255, 255), fade * 0.7f));
             char line[48];
-            snprintf(line, sizeof(line), "%.0f tr/min", s.rpm);
+            snprintf(line, sizeof(line), i18n::tr("%.0f tr/min"), s.rpm);
             ctx.fonts->semibold.draw(b, cx, cy + 290, 30, gfx::withAlpha(gfx::rgba(255, 255, 255), fade), line, gfx::Align::Center);
             if (s.bonusShown > 0 && static_cast<float>(s.bonusShown) > s.required) {
                 snprintf(line, sizeof(line), "+%d", (s.bonusShown - static_cast<int>(s.required)) * 1000);

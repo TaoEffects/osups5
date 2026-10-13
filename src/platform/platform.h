@@ -95,6 +95,8 @@ void audioStop();
 int audioBlockFrames();             // taille de bloc effectivement obtenue
 
 // Dossier inscriptible pour la config et les logs ("/download0" sur PS5).
+// Langue de la console (« fr », « en »...), pour choisir celle de l'interface.
+const char *systemLanguage();
 const char *writableDir();
 // Dossier en lecture seule des donnees embarquees ("/app0/assets" sur PS5).
 const char *assetsDir();

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "app/game.h"
+#include "core/i18n.h"
 #include "game/library.h"
 #include "ui/lz.h"
 
@@ -404,7 +405,7 @@ private:
         c.fonts->regular.drawMid(b, x + 84 * U, y + 58 * U, 15 * U, pal().content2, desc);
         char buf[64];
         if (installed) {
-            snprintf(buf, sizeof(buf), failed ? "%d / %d installées" : "installé", fin, static_cast<int>(states.size()));
+            snprintf(buf, sizeof(buf), failed ? i18n::tr("%d / %d installées") : i18n::tr("installé"), fin, static_cast<int>(states.size()));
             c.fonts->semibold.drawMid(b, x + w - 24 * U, y + h / 2, 16 * U, col::lime1, buf, gfx::Align::Right);
         } else if (started) {
             frac /= static_cast<float>(states.size());

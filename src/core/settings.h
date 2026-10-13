@@ -9,6 +9,7 @@ struct Settings {
     int refreshHz = 120;           // 120 (si l'écran suit, sinon la console reste en 60) ou 60 forcé
     float backgroundDim = 0.75f;   // assombrissement du fond en jeu (0..1)
     bool showDebug = false;
+    int language = 0;              // 0 langue de la console, 1 français, 2 anglais
     bool showHitErrorBar = true;
     // Son
     float masterVolume = 0.8f;

@@ -33,6 +33,7 @@ bool Settings::load(const std::string &path) {
         if (key == "refresh_hz") refreshHz = i == 120 ? 120 : 60;
         else if (key == "background_dim") backgroundDim = clampf(f, 0, 1);
         else if (key == "show_debug") showDebug = i != 0;
+        else if (key == "language") language = i;
         else if (key == "hit_error_bar") showHitErrorBar = i != 0;
         else if (key == "master_volume") masterVolume = clampf(f, 0, 1);
         else if (key == "music_volume") musicVolume = clampf(f, 0, 1);
@@ -87,6 +88,7 @@ bool Settings::save(const std::string &path) const {
     put("refresh_hz", "%d", refreshHz);
     put("background_dim", "%.2f", static_cast<double>(backgroundDim));
     put("show_debug", "%d", showDebug ? 1 : 0);
+    put("language", "%d", language);
     put("hit_error_bar", "%d", showHitErrorBar ? 1 : 0);
     put("master_volume", "%.2f", static_cast<double>(masterVolume));
     put("music_volume", "%.2f", static_cast<double>(musicVolume));

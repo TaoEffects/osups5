@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "app/game.h"
+#include "core/i18n.h"
 #include "game/library.h"
 #include "ui/lz.h"
 
@@ -231,7 +232,7 @@ public:
         } else if (game.mirror.searchBusy()) {
             spinner(c, kVW / 2, gridTop() + 200 * U, 40 * U, 1);
         } else if (!error_.empty()) {
-            text(c, c.fonts->semibold, kVW / 2, gridTop() + 160 * U, 24 * U, col::red1, "Erreur réseau : " + error_, gfx::Align::Center);
+            text(c, c.fonts->semibold, kVW / 2, gridTop() + 160 * U, 24 * U, col::red1, i18n::tr("Erreur réseau : ") + error_, gfx::Align::Center);
             c.fonts->regular.draw(b, kVW / 2, gridTop() + 200 * U, 18 * U, pal.content2, "Triangle (ou F2) pour réessayer", gfx::Align::Center);
         } else if (results_.empty()) {
             c.fonts->semibold.draw(b, kVW / 2, gridTop() + 160 * U, 24 * U, pal.content2, "Aucun résultat", gfx::Align::Center);
@@ -277,7 +278,7 @@ public:
         }
         padGlyph(c, Pad::R1, tabX(2) + tabW(2) + 16 * U, tabsY() + 15 * U, 20 * U);
         char line[64];
-        snprintf(line, sizeof(line), "%zu maps", results_.size());
+        snprintf(line, sizeof(line), i18n::tr("%zu maps"), results_.size());
         c.fonts->regular.drawMid(b, bx + bw, tabsY() + 15 * U, 16 * U, pal.content2, line, gfx::Align::Right);
         // Aide manette.
         const float fy = kVH - 30 * U;
@@ -372,8 +373,8 @@ private:
         const std::string &title = orig && !s.titleUnicode.empty() ? s.titleUnicode : s.title;
         const std::string &artist = orig && !s.artistUnicode.empty() ? s.artistUnicode : s.artist;
         text(c, c.fonts->semibold, tx, y + 7 * U, 18 * U, col::white, title, gfx::Align::Left, tw);
-        text(c, c.fonts->semibold, tx, y + 29 * U, 14 * U, pal.content2, "de " + artist, gfx::Align::Left, tw);
-        text(c, c.fonts->regular, tx, y + 47 * U, 13 * U, pal.light2, "mappée par " + s.creator, gfx::Align::Left, tw);
+        text(c, c.fonts->semibold, tx, y + 29 * U, 14 * U, pal.content2, i18n::tr("de ") + artist, gfx::Align::Left, tw);
+        text(c, c.fonts->regular, tx, y + 47 * U, 13 * U, pal.light2, i18n::tr("mappée par ") + s.creator, gfx::Align::Left, tw);
         // Statut + pastilles de difficulté.
         const bool ranked = s.status == "ranked" || s.status == "approved";
         const uint32_t statusCol = ranked ? hex(0xb3ff66) : s.status == "loved" ? hex(0xff66ab) : hex(0xffd966);

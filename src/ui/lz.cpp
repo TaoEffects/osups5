@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/lz.h"
 
+#include "core/i18n.h"
+
 #include <time.h>
 
 #include <algorithm>
@@ -607,7 +609,7 @@ float paragraph(Context &c, const gfx::Font &f, float x, float y, float width, f
         yy += size * lineHeight;
         line.clear();
     };
-    const std::string text = s + " ";
+    const std::string text = i18n::tr(s) + " ";
     for (char ch : text) {
         if (ch == '\n') {
             if (!word.empty()) line = line.empty() ? word : line + " " + word;

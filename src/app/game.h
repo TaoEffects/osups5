@@ -187,6 +187,8 @@ private:
     bool mouseActive_ = false;
     bool padPointer_ = false;  // le pointeur suit le stick droit (menus)
     float pointerX_ = -1, pointerY_ = -1;
+    float ptrTouchX_ = 0, ptrTouchY_ = 0;
+    bool ptrTouchDown_ = false;
     float touchLastX_ = 0, touchLastY_ = 0;
     double lastFrame_ = -1;
     double fpsAccum_ = 0;

@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "app/game.h"
+#include "core/i18n.h"
 #include "core/fsutil.h"
 #include "game/library.h"
 #include "ui/lz.h"
@@ -559,7 +560,7 @@ private:
                                  "Les mods changent la façon de jouer. Certains changent aussi le score.", gfx::Align::Center);
         char line[64];
         const float mult = game.mods.scoreMultiplier();
-        snprintf(line, sizeof(line), "Multiplicateur de score : x%.2f", mult);
+        snprintf(line, sizeof(line), i18n::tr("Multiplicateur de score : x%.2f"), mult);
         const float lw = c.fonts->semibold.measure(15 * U, line) + 24 * U;
         b.roundRect(kVW / 2 - lw / 2, top + 64 * U, lw, 22 * U, 11 * U, pal().background5);
         c.fonts->semibold.drawMid(b, kVW / 2, top + 75 * U, 15 * U, mult > 1.001f ? col::red1 : mult < 0.999f ? col::lime1 : col::white,
@@ -757,7 +758,7 @@ private:
         }
         const float nameW = c.fonts->semibold.drawMid(b, tx, y + 13 * U, 16 * U, col::white, d.version.c_str());
         text(c, c.fonts->semibold, tx + nameW + 6 * U, c.fonts->semibold.topForCenter(y + 13 * U, 14 * U), 14 * U, pal().content2,
-             "mappée par " + s.creator, gfx::Align::Left,
+             i18n::tr("mappée par ") + s.creator, gfx::Align::Left,
              std::max(0.0f, kVW - (tx + nameW + 30 * U)));
         const float pw = starPill(c, tx, y + 24 * U, 15 * U, d.stars, 1, known);
         // Compteur d'étoiles (10 petites étoiles, remplies selon la note).
@@ -940,9 +941,9 @@ private:
         const long long now = static_cast<long long>(time(nullptr));
         const long long d = std::max(0LL, now - date);
         char buf[48];
-        if (d < 3600) snprintf(buf, sizeof(buf), "il y a %lld min", d / 60);
-        else if (d < 86400) snprintf(buf, sizeof(buf), "il y a %lld h", d / 3600);
-        else snprintf(buf, sizeof(buf), "il y a %lld j", d / 86400);
+        if (d < 3600) snprintf(buf, sizeof(buf), i18n::tr("il y a %lld min"), d / 60);
+        else if (d < 86400) snprintf(buf, sizeof(buf), i18n::tr("il y a %lld h"), d / 3600);
+        else snprintf(buf, sizeof(buf), i18n::tr("il y a %lld j"), d / 86400);
         return buf;
     }
 
@@ -964,7 +965,7 @@ private:
             empty ? (plat::textInputSupported() ? "pavé tactile pour chercher..." : "tape pour chercher...") : query_ + (plat::textInputSupported() ? "" : "_");
         c.fonts->semibold.drawMid(b, bx + 46 * U, y + 21 * U, 18 * U, empty ? pal().light4 : col::white, shown.c_str());
         char line[64];
-        snprintf(line, sizeof(line), "%zu correspondance%s", visible_.size(), visible_.size() > 1 ? "s" : "");
+        snprintf(line, sizeof(line), i18n::tr("%zu correspondance%s"), visible_.size(), visible_.size() > 1 ? "s" : "");
         c.fonts->regular.drawMid(b, bx + bw - 16 * U, y + 21 * U, 14 * U, col::orange1, line, gfx::Align::Right);
         y += 42 * U + 8 * U;
         // Mods actifs et vitesse.

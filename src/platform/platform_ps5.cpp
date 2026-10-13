@@ -137,6 +137,7 @@ int sceAudioOutOpen(int user, int type, int index, uint32_t len, uint32_t freq, 
 int sceAudioOutOutput(int handle, const void *data);
 int sceAudioOutClose(int handle);
 int sceSystemServiceLoadExec(const char *path, char *const argv[]);
+int sceSystemServiceParamGetInt(int paramId, int *value);
 int sceKernelSendNotificationRequest(int device, void *request, size_t size, int blocking);
 }
 
@@ -569,6 +570,14 @@ void audioStop() {
 int audioBlockFrames() { return g_audioBlock; }
 
 const char *writableDir() { return "/download0"; }
+
+const char *systemLanguage() {
+    // SCE_SYSTEM_SERVICE_PARAM_ID_LANG : 2 français, 22 français (Canada).
+    int lang = -1;
+    const int r = sceSystemServiceParamGetInt(1, &lang);
+    LOG("ps5: langue de la console = %d (0x%08x)", lang, static_cast<unsigned>(r));
+    return r == 0 && (lang == 2 || lang == 22) ? "fr" : "en";
+}
 const char *assetsDir() { return "/app0/assets"; }
 
 // --- Clavier virtuel (SceImeDialog) -----------------------------------------
