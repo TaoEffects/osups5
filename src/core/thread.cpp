@@ -30,8 +30,7 @@ void stackBounds(uintptr_t &low, uintptr_t &high) {
     // macOS : la pile se lit directement.
     high = reinterpret_cast<uintptr_t>(pthread_get_stackaddr_np(pthread_self()));
     low = high - pthread_get_stacksize_np(pthread_self());
-    return;
-#endif
+#else
     pthread_attr_t attr;
 #if defined(__FreeBSD__)
     if (pthread_attr_init(&attr) != 0) return;
@@ -47,6 +46,7 @@ void stackBounds(uintptr_t &low, uintptr_t &high) {
         }
     }
     pthread_attr_destroy(&attr);
+#endif
 }
 
 void logStackInfo(const char *who) {
