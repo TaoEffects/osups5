@@ -243,13 +243,13 @@ private:
         float cx = r.x + r.w / 2;
         if (i == 0) cx -= kWedge * 0.5f * rel;
         if (i == 1) cx += kWedge * 0.5f * rel;
-        const float iy = r.y + r.h / 2 - 4 * U + m.iconY.at(t) - 8 * U;
+        const float iy = r.y + 42 * U + m.iconY.at(t);
         const float is = 32 * U * m.iconScale.at(t);
         icon(c, m.glyph, cx - kShear * (iy - (r.y + r.h / 2)), iy, is, alpha(col::white, ca));
         const float ts = 16 * U;
-        const float ly = r.y + r.h - 7 * U - ts;
-        c.fonts->semibold.drawShadow(b, cx - kShear * (ly + ts / 2 - (r.y + r.h / 2)) - 3 * U, ly, ts, alpha(col::white, ca), m.label,
-                                     gfx::Align::Center);
+        const float lc = r.y + r.h - 7 * U - ts * 0.4f;  // centre des capitales du libellé
+        c.fonts->semibold.drawShadow(b, cx - kShear * (lc - (r.y + r.h / 2)), c.fonts->semibold.topForCenter(lc, ts), ts,
+                                     alpha(col::white, ca), m.label, gfx::Align::Center);
         b.popTransform();
     }
 
@@ -392,8 +392,8 @@ private:
         const float x = kVW / 2 - w / 2, y = kVH - 20 * U - h;
         b.pushScaleAround(kVW / 2, y + h / 2, sc, a);
         b.roundRect(x, y, w, h, 10 * U, alpha(hex(0x171a1c), 0.75f));
-        icon(c, fa::lightbulb, x + 10 * U + 8 * U, y + 10 * U + 8 * U, 16 * U, col::pink0);
-        c.fonts->semibold.draw(b, x + 10 * U + 24 * U, y + 10 * U, ts, col::pink0, "Astuce");
+        icon(c, fa::lightbulb, x + 10 * U + 8 * U, y + 10 * U + ts * 0.5f, 16 * U, col::pink0);
+        c.fonts->semibold.drawMid(b, x + 10 * U + 24 * U, y + 10 * U + ts * 0.5f, ts, col::pink0, "Astuce");
         text(c, c.fonts->regular, x + 10 * U, y + 10 * U + ts + 8 * U, ts, col::white, tip, gfx::Align::Left, w - 20 * U);
         b.popTransform();
     }

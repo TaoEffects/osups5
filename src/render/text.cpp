@@ -229,6 +229,16 @@ float Font::drawSdf(SpriteBatch &batch, float x, float y, float size, uint32_t c
     return width;
 }
 
+void Font::drawGlyphCentered(SpriteBatch &batch, const char *s, float cx, float cy, float size, uint32_t color) const {
+    if (!loaded() || !s || (color >> 24) == 0) return;
+    const unsigned cp = decodeUtf8(s);
+    const Glyph *g = find(cp);
+    if (!g || g->x1 <= g->x0) return;
+    const float k = size / bakePx_;
+    const float w = (g->x1 - g->x0) * k, h = (g->y1 - g->y0) * k;
+    batch.sdfQuad(atlas_, cx - w * 0.5f, cy - h * 0.5f, w, h, color, g->u0, g->v0, g->u1, g->v1, 0, 0);
+}
+
 float Font::draw(SpriteBatch &batch, float x, float y, float size, uint32_t color, const char *s, Align align,
                  float spacing) const {
     return drawSdf(batch, x, y, size, color, s, align, spacing, 0, 0);

@@ -528,12 +528,13 @@ void SpriteBatch::quad4(const Texture &tex, const float xy[8], uint32_t color) {
 }
 
 void SpriteBatch::line(float x0, float y0, float x1, float y1, float t, uint32_t color) {
+    // Segment en « gélule » (bouts arrondis), anticrénelé par le shader.
     const float dx = x1 - x0, dy = y1 - y0;
     const float len = std::sqrt(dx * dx + dy * dy);
     if (len < 1e-4f) return;
-    const float nx = -dy / len * t * 0.5f, ny = dx / len * t * 0.5f;
-    const float xy[8] = {x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny};
-    quad4(white_, xy, color);
+    const float h = t * 0.5f;
+    shape(1, (x0 + x1) * 0.5f, (y0 + y1) * 0.5f, len * 0.5f + h, h, h, 0, 0, Corners{color, color, color, color}, 0,
+          std::atan2(dy, dx));
 }
 
 void SpriteBatch::gradient(float x, float y, float w, float h, uint32_t top, uint32_t bottom) {

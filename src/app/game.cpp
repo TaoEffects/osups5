@@ -428,12 +428,8 @@ void Game::setBackground(float dim, float blur, double dur, anim::Ease e) {
 void Game::drawBackground() {
     gfx::SpriteBatch &b = batch_;
     const double t = ctx.now * 1000;
-    // Fond par défaut (aucune map) : dégradé sombre et grands triangles lents.
+    // Fond par défaut (aucune map) : simple dégradé sombre.
     b.roundRectGradient(0, 0, kVW, kVH, 0, gfx::Corners::vertical(lz::hex(0x2a1f3d), lz::hex(0x120e1c)));
-    bgTriangles_.scaleAdjust = 2.5f;
-    bgTriangles_.velocity = 0.5f;
-    bgTriangles_.update(kVW, kVH, ctx.dt * 1000);
-    bgTriangles_.draw(ctx, 0, 0, lz::hex(0x2a1f3d), lz::hex(0x3a2b55), 1);
     if (!backgroundVisible) return;
     // Parallaxe légère suivant la souris (comme lazer).
     const UiInput &in = lastInput_;
@@ -635,7 +631,13 @@ UiInput Game::buildInput(const plat::InputState &raw) {
     return in;
 }
 
+void Game::reportSwap(double swapMs) {
+    perfSwap_ += swapMs;
+    perfSwapMax_ = std::max(perfSwapMax_, swapMs);
+}
+
 void Game::frame(const plat::InputState &raw, double now) {
+    const double frameStart = plat::nowSeconds();
     ctx.dt = lastFrame_ < 0 ? 1.0f / 60.0f : static_cast<float>(std::min(0.1, now - lastFrame_));
     lastFrame_ = now;
     ctx.now = now;
@@ -701,12 +703,14 @@ void Game::frame(const plat::InputState &raw, double now) {
     }
 
     // Rendu dans la cible MSAA (recréée si la taille change), résolue à la fin.
-    if (msaa_.fbo && (msaa_.width != plat::width() || msaa_.height != plat::height())) msaa_.destroy();
-    if (!msaa_.fbo && !msaaFailed_) msaaFailed_ = !msaa_.create(plat::width(), plat::height(), 4);
+    if (msaa_.fbo && (msaa_.width != plat::width() || msaa_.height != plat::height() || !settings_.msaa)) msaa_.destroy();
+    if (settings_.msaa && !msaa_.fbo && !msaaFailed_) msaaFailed_ = !msaa_.create(plat::width(), plat::height(), 4);
     batch_.setScreenFramebuffer(msaa_.fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, msaa_.fbo);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
+    const double renderStart = plat::nowSeconds();
+    perfUpdate_ += (renderStart - frameStart) * 1000;
     batch_.begin(kVW, kVH, plat::width(), plat::height());
     drawBackground();
     for (Leaving &l : leaving_)
@@ -737,6 +741,24 @@ void Game::frame(const plat::InputState &raw, double now) {
                  netlog::port(), netlog::clientConnected() ? " (PC)" : "");
         fonts_.regular.drawShadow(batch_, 12, kVH - 30, 20, gfx::rgba(200, 255, 200), line);
     }
+    const double submitStart = plat::nowSeconds();
     batch_.end();
     if (msaa_.fbo) msaa_.resolveToScreen();
+    const double frameEnd = plat::nowSeconds();
+    perfBuild_ += (submitStart - renderStart) * 1000;
+    perfSubmit_ += (frameEnd - submitStart) * 1000;
+    perfFrameMax_ = std::max(perfFrameMax_, (frameEnd - frameStart) * 1000);
+    ++perfFrames_;
+    // Toutes les 3 s, le détail du temps passé par image (dans le log réseau).
+    if (now - perfLast_ >= 3.0 && perfFrames_ > 0) {
+        const double n = perfFrames_;
+        const gfx::BatchStats &bs = batch_.lastFrame();
+        LOG("perf: %.1f img/s | maj %.2f ms, construction %.2f ms, envoi GPU %.2f ms, swap %.2f ms (max image %.1f, max swap %.1f) | "
+            "%d appels, %d envois, %d quads, msaa %d",
+            n / (now - perfLast_), perfUpdate_ / n, perfBuild_ / n, perfSubmit_ / n, perfSwap_ / n, perfFrameMax_, perfSwapMax_,
+            bs.drawCalls, bs.flushes, bs.quads, msaa_.fbo ? 1 : 0);
+        perfLast_ = now;
+        perfFrames_ = 0;
+        perfUpdate_ = perfBuild_ = perfSubmit_ = perfSwap_ = perfFrameMax_ = perfSwapMax_ = 0;
+    }
 }

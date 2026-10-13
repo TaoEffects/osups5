@@ -397,6 +397,7 @@ private:
         case 0:
             modsOpen_ = true;
             modsA_.go(ms(c), 1, 400, Ease::OutQuint);
+            game.logo.opacity.go(ms(c), 0, 200, Ease::OutQuint);
             for (int k = 0; k < 3; ++k) modColY_[k].fromTo(ms(c), 120 * U, 0, 500, Ease::OutQuint, k * 30.0);
             c.play(c.sfx->uiOpen, 0.7f);
             break;
@@ -428,6 +429,7 @@ private:
         auto close = [&]() {
             modsOpen_ = false;
             modsA_.go(t, 0, 300, Ease::OutQuint);
+            game.logo.opacity.go(t, 1, 300, Ease::OutQuint);
             for (int k = 0; k < 3; ++k) modColY_[k].go(t, 60 * U, 300, Ease::OutQuint);
             c.play(c.sfx->uiBack);
         };
@@ -460,7 +462,7 @@ private:
         for (int i = 0; i < kModCount; ++i) {
             float x, y;
             modRect(i, x, y);
-            if (in.hover(x, y, modW(), 42 * U)) {
+            if (in.hover(x, y, modW(), kModH)) {
                 if (in.mouseMoved) modCursor_ = i;
                 if (in.mouseClick) {
                     modCursor_ = i;
@@ -468,7 +470,7 @@ private:
                 }
             }
         }
-        if (in.mouseClick && in.mouseY < modsTop() - 20 * U) {
+        if (in.mouseClick && (in.mouseY < modsTop() - 20 * U || in.mouseY > kVH - kFooterH - 20 * U)) {
             close();
             return;
         }
@@ -494,16 +496,28 @@ private:
         }
     }
 
-    float modsTop() const { return kVH * 0.42f; }
+    // Mise en page centrée : en-tête puis 3 colonnes, le tout au milieu de l'espace libre.
+    static constexpr float kModH = 42 * U, kModGap = 7 * U, kColPad = 14 * U, kColGap = 24 * U, kColHead = 44 * U;
+    static constexpr float kModHeader = 96 * U;
     float modW() const { return 300 * U; }
+    float colW() const { return modW() + kColPad * 2; }
+    float modsTop() const {
+        const float blockH = kModHeader + kColHead + 4 * (kModH + kModGap) + kColPad;
+        const float areaTop = game.toolbar.kHeight, areaBottom = kVH - kFooterH - 40 * U;
+        return (areaTop + areaBottom) / 2 - blockH / 2;
+    }
+    float colX(int col) const {
+        const float total = 3 * colW() + 2 * kColGap;
+        return kVW / 2 - total / 2 + static_cast<float>(col) * (colW() + kColGap);
+    }
+    float colTop(int col) const { return modsTop() + kModHeader + modColY_[col].at(ms(game.ctx)); }
     void modRect(int i, float &x, float &y) const {
         const int col = kMods[i].type;
         int row = 0;
         for (int k = 0; k < i; ++k)
             if (kMods[k].type == col) ++row;
-        const float total = 3 * (modW() + 30 * U) - 30 * U;
-        x = kVW / 2 - total / 2 + static_cast<float>(col) * (modW() + 30 * U) + 15 * U;
-        y = modsTop() + 60 * U + static_cast<float>(row) * (42 * U + 7 * U) + modColY_[col].at(ms(game.ctx));
+        x = colX(col) + kColPad;
+        y = colTop(col) + kColHead + static_cast<float>(row) * (kModH + kModGap);
     }
 
     void renderMods() {
@@ -512,34 +526,29 @@ private:
         const double t = ms(c);
         const float a = modsA_.at(t);
         b.pushAlpha(a);
-        b.rect(0, 0, kVW, kVH, alpha(col::black, 0.5f));
-        const float top = modsTop() - 100 * U;
-        b.roundRectGradient(0, top, kVW, kVH - top, 0, gfx::Corners::vertical(alpha(pal().background6, 0), alpha(pal().background6, 0.95f)));
-        // En-tête.
-        c.fonts->light.draw(b, kVW / 2 - 3 * (modW() + 30 * U) / 2 + 15 * U, top + 10 * U, 30 * U, col::white, "mods");
-        char line[96];
-        snprintf(line, sizeof(line), "Multiplicateur de score : ×%.2f", game.mods.scoreMultiplier());
+        b.rect(0, 0, kVW, kVH, alpha(col::black, 0.82f));
+        // En-tête centré : titre, explication, multiplicateur.
+        const float top = modsTop();
+        c.fonts->light.drawMid(b, kVW / 2, top + 18 * U, 34 * U, col::white, "mods", gfx::Align::Center);
+        c.fonts->regular.drawMid(b, kVW / 2, top + 48 * U, 15 * U, pal().content2,
+                                 "Les mods changent la façon de jouer. Certains changent aussi le score.", gfx::Align::Center);
+        char line[64];
         const float mult = game.mods.scoreMultiplier();
-        c.fonts->semibold.draw(b, kVW / 2 + 3 * (modW() + 30 * U) / 2 - 15 * U, top + 22 * U, 18 * U,
-                               mult > 1.001f ? col::red1 : mult < 0.999f ? col::lime1 : col::white, line, gfx::Align::Right);
-        c.fonts->regular.draw(b, kVW / 2 - 3 * (modW() + 30 * U) / 2 + 15 * U, top + 48 * U, 15 * U, pal().content2,
-                              "Les mods changent la façon de jouer. Certains changent aussi le score.");
+        snprintf(line, sizeof(line), "Multiplicateur de score : x%.2f", mult);
+        const float lw = c.fonts->semibold.measure(15 * U, line) + 24 * U;
+        b.roundRect(kVW / 2 - lw / 2, top + 64 * U, lw, 22 * U, 11 * U, pal().background5);
+        c.fonts->semibold.drawMid(b, kVW / 2, top + 75 * U, 15 * U, mult > 1.001f ? col::red1 : mult < 0.999f ? col::lime1 : col::white,
+                                  line, gfx::Align::Center);
         // Colonnes.
         for (int col = 0; col < 3; ++col) {
-            float x, y;
-            int first = 0;
             int count = 0;
-            for (int i = 0; i < kModCount; ++i)
-                if (kMods[i].type == col) {
-                    if (!count) first = i;
-                    ++count;
-                }
-            modRect(first, x, y);
-            const float ch = 60 * U + static_cast<float>(count) * 49 * U + 10 * U;
-            const float cy = y - 50 * U;
-            b.roundRect(x - 10 * U, cy, modW() + 20 * U, ch, 10 * U, pal().background5, kShear);
-            b.roundRect(x - 10 * U, cy, modW() + 20 * U, 4 * U, 2 * U, modTypeColor(col), kShear);
-            c.fonts->semibold.draw(b, x + 6 * U, cy + 14 * U, 17 * U, col::white, kModColumns[col]);
+            for (int i = 0; i < kModCount; ++i) count += kMods[i].type == col;
+            const float cx = colX(col), cy = colTop(col);
+            const float ch = kColHead + static_cast<float>(count) * (kModH + kModGap) - kModGap + kColPad;
+            b.shadow(cx, cy + 3 * U, colW(), ch, 10 * U, 10 * U, alpha(col::black, 0.35f));
+            b.roundRect(cx, cy, colW(), ch, 10 * U, pal().background5);
+            b.roundRect(cx, cy, colW(), 4 * U, 2 * U, modTypeColor(col));
+            c.fonts->semibold.drawMid(b, cx + colW() / 2, cy + kColHead / 2 + 2 * U, 17 * U, col::white, kModColumns[col], gfx::Align::Center);
         }
         for (int i = 0; i < kModCount; ++i) {
             float x, y;
@@ -548,18 +557,20 @@ private:
             const bool on = game.mods.*(d.flag);
             const bool sel = i == modCursor_;
             const uint32_t accent = modTypeColor(d.type);
-            const float h = 42 * U;
-            // Panneau incliné : la partie gauche (interrupteur) prend la couleur du type si actif.
-            b.shadow(x, y + 2 * U, modW(), h, 7 * U, 4 * U, alpha(col::black, 0.25f), kShear);
-            b.roundRect(x, y, modW(), h, 7 * U, on ? accent : (sel ? pal().background2 : pal().background3), kShear);
-            b.roundRect(x + 30 * U, y, modW() - 30 * U, h, 7 * U, on ? darken(accent, 0.7f) : (sel ? pal().background3 : pal().background4), kShear);
+            const float h = kModH, w = modW(), mid = y + h / 2;
+            // Le contenu suit l'inclinaison du panneau.
+            auto sx = [&](float yy) { return -kShear * (yy - mid); };
+            b.shadow(x, y + 2 * U, w, h, 7 * U, 4 * U, alpha(col::black, 0.25f), kShear);
+            b.roundRect(x, y, w, h, 7 * U, on ? accent : (sel ? pal().background2 : pal().background3), kShear);
+            b.roundRect(x + 30 * U, y, w - 30 * U, h, 7 * U, on ? darken(accent, 0.7f) : (sel ? pal().background3 : pal().background4), kShear);
             const float fl = modFlash_[i].at(t);
-            if (fl > 0) b.roundRect(x, y, modW(), h, 7 * U, alpha(col::white, fl * 0.3f), kShear);
-            if (sel && !game.input().mouseActive) b.roundRectBorder(x - 2, y - 2, modW() + 4, h + 4, 8 * U, 2.5f, col::white, kShear);
-            modIcon(c, d.acronym, x + 58 * U, y + h / 2, 22 * U, on ? col::white : accent);
-            c.fonts->semibold.draw(b, x + 88 * U, y + 5 * U, 17 * U, col::white, d.name);
-            text(c, c.fonts->regular, x + 88 * U - 3 * U, y + 24 * U, 12 * U, on ? alpha(col::white, 0.85f) : pal().content2, d.desc,
-                 gfx::Align::Left, modW() - 96 * U);
+            if (fl > 0) b.roundRect(x, y, w, h, 7 * U, alpha(col::white, fl * 0.3f), kShear);
+            if (sel && !game.input().mouseActive) b.roundRectBorder(x - 2, y - 2, w + 4, h + 4, 8 * U, 2.5f, col::white, kShear);
+            modIcon(c, d.acronym, x + 30 * U + 28 * U, mid, 22 * U, on ? col::white : accent);
+            const float nameY = y + 15 * U, descY = y + 30 * U;
+            c.fonts->semibold.drawMid(b, x + 92 * U + sx(nameY), nameY, 17 * U, col::white, d.name);
+            const std::string desc = c.fonts->regular.ellipsize(12 * U, d.desc, w - 100 * U);
+            c.fonts->regular.drawMid(b, x + 92 * U + sx(descY), descY, 12 * U, on ? alpha(col::white, 0.85f) : pal().content2, desc.c_str());
         }
         b.popTransform();
     }
@@ -670,7 +681,7 @@ private:
         const float py = y + h - 13 * U - 14 * U;
         const float sw = c.fonts->bold.measure(12 * U, "LOCALE") + 12 * U;
         b.roundRect(tx, py, sw, 14 * U, 5 * U, alpha(col::black, 0.55f));
-        c.fonts->bold.draw(b, tx + sw / 2, py + 0.5f * U, 12 * U, pal().content2, "LOCALE", gfx::Align::Center);
+        c.fonts->bold.drawMid(b, tx + sw / 2, py + 7 * U, 11 * U, pal().content2, "LOCALE", gfx::Align::Center);
         float dx = tx + sw + 5 * U;
         b.roundRect(dx, py, std::min<size_t>(s.diffs.size(), 12) * 8 * U + 8 * U, 14 * U, 5 * U, alpha(col::black, 0.55f));
         dx += 4 * U;
@@ -682,7 +693,7 @@ private:
         if (s.diffs.size() > 12) {
             char more[16];
             snprintf(more, sizeof(more), "+%zu", s.diffs.size() - 12);
-            c.fonts->semibold.draw(b, dx + 4 * U, py, 12 * U, alpha(col::white, 0.7f), more);
+            c.fonts->semibold.drawMid(b, dx + 4 * U, py + 7 * U, 12 * U, alpha(col::white, 0.7f), more);
         }
     }
 
@@ -711,11 +722,12 @@ private:
             const LocalScore &best = scores.front();
             const uint32_t rc = rankColor(best.rank);
             b.roundRect(tx, y + h / 2 - 8 * U, 32 * U, 16 * U, 8 * U, rc);
-            c.fonts->bold.draw(b, tx + 16 * U, y + h / 2 - 7 * U, 12 * U, darken(rc, 2.5f), best.rank.c_str(), gfx::Align::Center);
+            c.fonts->bold.drawMid(b, tx + 16 * U, y + h / 2, 12 * U, darken(rc, 2.5f), best.rank.c_str(), gfx::Align::Center);
             tx += 32 * U + 5 * U;
         }
-        const float nameW = c.fonts->semibold.draw(b, tx, y + 4 * U, 16 * U, col::white, d.version.c_str());
-        text(c, c.fonts->semibold, tx + nameW + 6 * U, y + 6 * U, 14 * U, pal().content2, "mappée par " + s.creator, gfx::Align::Left,
+        const float nameW = c.fonts->semibold.drawMid(b, tx, y + 13 * U, 16 * U, col::white, d.version.c_str());
+        text(c, c.fonts->semibold, tx + nameW + 6 * U, c.fonts->semibold.topForCenter(y + 13 * U, 14 * U), 14 * U, pal().content2,
+             "mappée par " + s.creator, gfx::Align::Left,
              std::max(0.0f, kVW - (tx + nameW + 30 * U)));
         const float pw = starPill(c, tx, y + 24 * U, 15 * U, d.stars, 1, known);
         // Compteur d'étoiles (10 petites étoiles, remplies selon la note).
@@ -723,7 +735,7 @@ private:
         for (int k = 0; k < 10; ++k) {
             const float fill = std::clamp(full - static_cast<float>(k), 0.0f, 1.0f);
             const float ss = 8 * U * (0.6f + 0.4f * fill);
-            icon(c, fa::star, tx + pw + 12 * U + static_cast<float>(k) * 11 * U, y + 31.5f * U, ss,
+            icon(c, fa::star, tx + pw + 12 * U + static_cast<float>(k) * 11 * U, y + 24 * U + 7.5f * U, ss,
                  fill > 0 ? sc : alpha(col::white, 0.15f));
         }
     }
@@ -753,7 +765,7 @@ private:
         // Pastille de statut.
         const float pw = c.fonts->bold.measure(14 * U, "LOCALE") + 12 * U;
         b.roundRect(sx(y + 9 * U), y, pw, 18 * U, 9 * U, alpha(col::black, 0.5f));
-        c.fonts->bold.draw(b, sx(y + 9 * U) + pw / 2, y + 1.5f * U, 14 * U, pal().content2, "LOCALE", gfx::Align::Center);
+        c.fonts->bold.drawMid(b, sx(y + 9 * U) + pw / 2, y + 9 * U, 13 * U, pal().content2, "LOCALE", gfx::Align::Center);
         y += 18 * U + 4 * U;
         const std::string title = s.titleUnicode.empty() ? s.title : s.titleUnicode;
         const std::string artist = s.artistUnicode.empty() ? s.artist : s.artistUnicode;
@@ -776,7 +788,7 @@ private:
             const float bw = 18 * U + 8 * U + vw + 20 * U;
             b.roundRect(stx, y, bw, 30 * U, 5 * U, alpha(col::black, 0.2f), kShear);
             icon(c, st.glyph, stx + 10 * U + 9 * U, y + 15 * U, 16 * U, pal().content2);
-            c.fonts->semibold.draw(b, stx + 10 * U + 18 * U + 6 * U, y + 5 * U, 18 * U, pal().content2, st.value);
+            c.fonts->semibold.drawMid(b, stx + 10 * U + 18 * U + 6 * U, y + 15 * U, 18 * U, pal().content2, st.value);
             stx += bw + 4 * U;
         }
         y += 30 * U + 10 * U;
@@ -788,9 +800,10 @@ private:
         const float pillW = starPill(c, rx, y + 5 * U, 20 * U, d.stars, 1, d.stars >= 0);
         const uint32_t fg = d.stars >= 0 ? starTextColor(d.stars) : alpha(col::black, 0.75f);
         rx += pillW + 6 * U;
-        rx += c.fonts->semibold.draw(b, rx, y + 6 * U, 16 * U, fg, d.version.c_str()) + 6 * U;
-        rx += c.fonts->regular.draw(b, rx, y + 6 * U, 16 * U, fg, "mappée par") + 5 * U;
-        text(c, c.fonts->semibold, rx, y + 6 * U, 16 * U, fg, s.creator, gfx::Align::Left, std::max(10.0f, dx + dw - rx - 20 * U));
+        const float rowMid = y + 15 * U, rowTop = c.fonts->semibold.topForCenter(rowMid, 16 * U);
+        rx += c.fonts->semibold.draw(b, rx, rowTop, 16 * U, fg, d.version.c_str()) + 6 * U;
+        rx += c.fonts->regular.draw(b, rx, rowTop, 16 * U, fg, "mappée par") + 5 * U;
+        text(c, c.fonts->semibold, rx, rowTop, 16 * U, fg, s.creator, gfx::Align::Left, std::max(10.0f, dx + dw - rx - 20 * U));
         const float iy = y + 30 * U;
         b.roundRect(dx + 2 * U - kShear * 26.5f * U * 0, iy, dw - 4 * U, 53 * U - 2 * U, 8 * U, alpha(pal().background5, 0.92f), kShear);
         // Barres : cercles / sliders / spinners puis CS AR OD HP (modifiés par les mods).
@@ -849,7 +862,7 @@ private:
         // En-tête : onglet « Classement local ».
         const float tw = c.fonts->semibold.measure(16 * U, "Classement local") + 30 * U;
         b.roundRect(x0 - kShear * 0, top, tw, 26 * U, 13 * U, pal().background3, kShear);
-        c.fonts->semibold.draw(b, x0 + tw / 2, top + 4 * U, 16 * U, col::white, "Classement local", gfx::Align::Center);
+        c.fonts->semibold.drawMid(b, x0 + tw / 2, top + 13 * U, 16 * U, col::white, "Classement local", gfx::Align::Center);
         const std::vector<LocalScore> scores = game.scoresFor(Game::diffKey(s, d));
         const std::string key = Game::diffKey(s, d);
         if (key != boardKey_) {
@@ -878,15 +891,15 @@ private:
             b.pushAlpha(k);
             b.roundRect(rx, y, rw, rowH, 10 * U, pal().background4, kShear);
             snprintf(line, sizeof(line), "#%zu", i + 1);
-            c.fonts->bold.draw(b, rx + 28 * U, y + 15 * U, 18 * U, pal().content2, line, gfx::Align::Center);
+            c.fonts->bold.drawMid(b, rx + 28 * U, y + rowH / 2, 18 * U, pal().content2, line, gfx::Align::Center);
             const uint32_t rc = rankColor(sc.rank);
             b.roundRect(rx + 56 * U, y + rowH / 2 - 10 * U, 40 * U, 20 * U, 10 * U, rc, kShear);
-            c.fonts->bold.draw(b, rx + 76 * U, y + rowH / 2 - 8.5f * U, 15 * U, darken(rc, 2.5f), sc.rank.c_str(), gfx::Align::Center);
+            c.fonts->bold.drawMid(b, rx + 76 * U, y + rowH / 2, 15 * U, darken(rc, 2.5f), sc.rank.c_str(), gfx::Align::Center);
             snprintf(line, sizeof(line), "%lld", sc.score);
-            c.fonts->light.draw(b, rx + 110 * U, y + 6 * U, 22 * U, col::white, line);
+            c.fonts->light.drawMid(b, rx + 110 * U, y + 17 * U, 22 * U, col::white, line);
             snprintf(line, sizeof(line), "%.2f%%   %dx   %s", sc.accuracy * 100, sc.maxCombo, sc.mods.c_str());
-            c.fonts->semibold.draw(b, rx + 112 * U, y + 30 * U, 13 * U, pal().content2, line);
-            c.fonts->regular.draw(b, rx + rw - 20 * U, y + 17 * U, 14 * U, pal().light4, relativeDate(sc.date).c_str(), gfx::Align::Right);
+            c.fonts->semibold.drawMid(b, rx + 112 * U, y + 36 * U, 13 * U, pal().content2, line);
+            c.fonts->regular.drawMid(b, rx + rw - 20 * U, y + rowH / 2, 14 * U, pal().light4, relativeDate(sc.date).c_str(), gfx::Align::Right);
             b.popTransform();
             y += rowH + 4 * U;
         }
@@ -918,16 +931,16 @@ private:
         icon(c, fa::magnifying_glass, bx + 24 * U - kShear * 0, y + 21 * U, 15 * U, pal().light2);
         const bool empty = query_.empty();
         const std::string shown = empty ? "tape pour chercher..." : query_ + "_";
-        c.fonts->semibold.draw(b, bx + 46 * U, y + 11 * U, 18 * U, empty ? pal().light4 : col::white, shown.c_str());
+        c.fonts->semibold.drawMid(b, bx + 46 * U, y + 21 * U, 18 * U, empty ? pal().light4 : col::white, shown.c_str());
         char line[64];
         snprintf(line, sizeof(line), "%zu correspondance%s", visible_.size(), visible_.size() > 1 ? "s" : "");
-        c.fonts->regular.draw(b, bx + bw - 16 * U, y + 13 * U, 14 * U, col::orange1, line, gfx::Align::Right);
+        c.fonts->regular.drawMid(b, bx + bw - 16 * U, y + 21 * U, 14 * U, col::orange1, line, gfx::Align::Right);
         y += 42 * U + 8 * U;
         // Mods actifs et vitesse.
         const std::string mods = game.mods.label();
-        c.fonts->semibold.draw(b, bx + 4 * U, y + 4 * U, 14 * U, pal().content2, "Mods :");
+        c.fonts->semibold.drawMid(b, bx + 4 * U, y + 12 * U, 14 * U, pal().content2, "Mods :");
         if (mods.empty()) {
-            c.fonts->regular.draw(b, bx + 52 * U, y + 4 * U, 14 * U, pal().light4, "aucun  (Carré / F1)");
+            c.fonts->regular.drawMid(b, bx + 52 * U, y + 12 * U, 14 * U, pal().light4, "aucun  (Carré / F1)");
         } else {
             float mx = bx + 70 * U;
             size_t p = 0;
@@ -988,10 +1001,10 @@ private:
                 b.roundRect(bx + 4 * U, by - 30 * U - 5 * U, kFooterBtnW * 0.35f, 30 * U, 10 * U, pal().background5, kShear);
                 char m[16];
                 snprintf(m, sizeof(m), "%.2fx", mult);
-                c.fonts->bold.draw(b, bx + 4 * U + kFooterBtnW * 0.175f, by - 30 * U + 1 * U, 13 * U,
+                c.fonts->bold.drawMid(b, bx + 4 * U + kFooterBtnW * 0.175f, by - 20 * U, 13 * U,
                                    mult > 1.001f ? col::red1 : mult < 0.999f ? col::lime1 : col::white, m, gfx::Align::Center);
                 const std::string lab = game.mods.label();
-                text(c, c.fonts->bold, bx + 4 * U + kFooterBtnW * 0.675f, by - 30 * U + 1 * U, 13 * U, col::white, lab, gfx::Align::Center,
+                text(c, c.fonts->bold, bx + 4 * U + kFooterBtnW * 0.675f, c.fonts->bold.topForCenter(by - 20 * U, 13 * U), 13 * U, col::white, lab, gfx::Align::Center,
                      kFooterBtnW * 0.6f);
             }
             footerButton(c, footerFx_[i], bx, by, glyphs[i], labels[i], accents[i], i == 0 && modsOpen_, 1, pads[i]);

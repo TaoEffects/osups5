@@ -128,7 +128,7 @@ public:
         b.roundRect(nextX(), nextY(), 200 * U, 50 * U, 7 * U, lighten(col::purple1, 0.2f * hv), kShear);
         const float fl = nextFx_.flash.at(t);
         if (fl > 0) b.roundRect(nextX(), nextY(), 200 * U, 50 * U, 7 * U, alpha(col::white, fl), kShear);
-        c.fonts->bold.draw(b, nextX() + 100 * U, nextY() + 14 * U, 20 * U, col::white, "Continuer", gfx::Align::Center);
+        c.fonts->bold.drawMid(b, nextX() + 100 * U, nextY() + 25 * U, 20 * U, col::white, "Continuer", gfx::Align::Center);
         padGlyph(c, Pad::Cross, nextX() - 26 * U, nextY() + 25 * U, 26 * U);
         b.popTransform();
     }

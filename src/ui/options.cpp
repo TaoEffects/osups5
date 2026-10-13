@@ -148,7 +148,7 @@ public:
                 if (sy < kVH && sy > top - 80 * U) {
                     b.rect(x0 + kSidebarW, sy - 14 * U, kPanelW, 1.5f * U, pal.background6);
                     icon(c, sectionIcon(si), cx + 12 * U, sy + 16 * U, 22 * U, pal.highlight1);
-                    c.fonts->bold.draw(b, cx + 36 * U, sy + 4 * U, 24 * U, col::white, it.section);
+                    c.fonts->bold.drawMid(b, cx + 36 * U, sy + 16 * U, 24 * U, col::white, it.section);
                 }
             }
             if (y > kVH || y + h < top) continue;
@@ -160,11 +160,11 @@ public:
             const std::string v = it.value();
             const float ts = 16 * U;
             if (it.kind == Kind::Toggle) {
-                c.fonts->regular.draw(b, cx, y + (h - ts) / 2 - 2 * U, ts, col::white, it.label);
+                c.fonts->regular.drawMid(b, cx, y + h / 2, ts, col::white, it.label);
                 drawSwitch(cx + cw - 45 * U, y + h / 2 - 10 * U, v == "on", sel);
             } else if (it.kind == Kind::Slider) {
-                c.fonts->regular.draw(b, cx, y + 8 * U, ts, col::white, it.label);
-                c.fonts->semibold.draw(b, cx + cw, y + 8 * U, ts, pal.content2, v.c_str(), gfx::Align::Right);
+                c.fonts->regular.drawMid(b, cx, y + 16 * U, ts, col::white, it.label);
+                c.fonts->semibold.drawMid(b, cx + cw, y + 16 * U, ts, pal.content2, v.c_str(), gfx::Align::Right);
                 const float f = std::clamp(it.fill(), 0.0f, 1.0f);
                 const float by = y + h - 16 * U;
                 b.roundRect(cx, by - 2 * U, cw, 4 * U, 2 * U, alpha(col::pink1, 0.3f));
@@ -174,10 +174,10 @@ public:
                 b.roundRect(nx - 14 * U, by - 6 * U, 28 * U, 12 * U, 6 * U, sel ? col::pink1 : pal.background4);
                 b.roundRectBorder(nx - 14 * U, by - 6 * U, 28 * U, 12 * U, 6 * U, 2.5f * U, col::pink1);
             } else {
-                c.fonts->regular.draw(b, cx, y + 8 * U, ts, col::white, it.label);
+                c.fonts->regular.drawMid(b, cx, y + 16 * U, ts, col::white, it.label);
                 const float dy = y + 30 * U, dh = 32 * U;
                 b.roundRect(cx, dy, cw, dh, 5 * U, sel ? pal.background2 : pal.background5);
-                c.fonts->semibold.draw(b, cx + 12 * U, dy + (dh - ts) / 2 - 2 * U, ts, col::white, v.c_str());
+                c.fonts->semibold.drawMid(b, cx + 12 * U, dy + dh / 2, ts, col::white, v.c_str());
                 icon(c, fa::chevron_left, cx + cw - 38 * U, dy + dh / 2, 12 * U, pal.light2);
                 icon(c, fa::chevron_right, cx + cw - 16 * U, dy + dh / 2, 12 * U, pal.light2);
             }
@@ -198,10 +198,10 @@ public:
         const float fy = kVH - 34 * U;
         b.rect(x0 + kSidebarW, fy - 8 * U, kPanelW, 42 * U, pal.background5);
         padGlyph(c, Pad::Circle, cx + 10 * U, fy + 12 * U, 20 * U);
-        c.fonts->regular.draw(b, cx + 26 * U, fy + 4 * U, 14 * U, pal.content2, "fermer");
+        c.fonts->regular.drawMid(b, cx + 26 * U, fy + 12 * U, 14 * U, pal.content2, "fermer");
         padGlyph(c, Pad::L1, cx + 100 * U, fy + 12 * U, 20 * U);
         padGlyph(c, Pad::R1, cx + 124 * U, fy + 12 * U, 20 * U);
-        c.fonts->regular.draw(b, cx + 140 * U, fy + 4 * U, 14 * U, pal.content2, "sections");
+        c.fonts->regular.drawMid(b, cx + 140 * U, fy + 12 * U, 14 * U, pal.content2, "sections");
     }
 
 private:
@@ -311,6 +311,10 @@ private:
                s.backgroundDim, 0, 1, 0.05f, [&s] { return pct(s.backgroundDim); });
         toggle("Affichage", "Barre d'erreur de frappe", "Affiche en bas de l'écran si tes frappes sont en avance ou en retard.",
                s.showHitErrorBar);
+        toggle("Affichage", "Anticrénelage MSAA",
+               "Lisse encore plus les bords, mais peut faire chuter fortement les images par seconde sur la console. "
+               "Laisse désactivé si le jeu rame.",
+               s.msaa);
         toggle("Affichage", "Infos de débogage", "Affiche les FPS, les appels de dessin et l'adresse du log réseau.", s.showDebug);
         slider("Son", "Volume général", "Volume de tout le jeu.", s.masterVolume, 0, 1, 0.05f, [&s] { return pct(s.masterVolume); });
         slider("Son", "Musique", "Volume de la musique.", s.musicVolume, 0, 1, 0.05f, [&s] { return pct(s.musicVolume); });

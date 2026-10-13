@@ -194,8 +194,8 @@ public:
         const float hy = top;
         b.rect(0, hy, kVW, 70 * U, pal.background4);
         icon(c, fa::download, kMargin + 20 * U, hy + 35 * U, 26 * U, pal.highlight1);
-        c.fonts->light.draw(b, kMargin + 48 * U, hy + 17 * U, 30 * U, col::white, "télécharger des maps");
-        c.fonts->regular.draw(b, kVW - kMargin, hy + 26 * U, 16 * U, pal.content2, "depuis le miroir osu.direct", gfx::Align::Right);
+        c.fonts->light.drawMid(b, kMargin + 48 * U, hy + 35 * U, 30 * U, col::white, "télécharger des maps");
+        c.fonts->regular.drawMid(b, kVW - kMargin, hy + 35 * U, 16 * U, pal.content2, "depuis le miroir osu.direct", gfx::Align::Right);
         b.rect(0, hy + 70 * U, kVW, 2 * U, pal.highlight1);
         // Zone de recherche avec la pochette du premier résultat en fond.
         const float sy = hy + 72 * U, sh = 120 * U;
@@ -215,18 +215,18 @@ public:
         icon(c, fa::magnifying_glass, bx + 22 * U, sy + 38 * U, 16 * U, pal.light2);
         const bool empty = query_.empty();
         const std::string shown = empty ? "rechercher (clavier)..." : query_ + "_";
-        c.fonts->regular.draw(b, bx + 44 * U, sy + 27 * U, 20 * U, empty ? pal.light4 : col::white, shown.c_str());
+        c.fonts->regular.drawMid(b, bx + 44 * U, sy + 38 * U, 20 * U, empty ? pal.light4 : col::white, shown.c_str());
         // Onglets de tri.
-        c.fonts->semibold.draw(b, bx, tabsY() + 6 * U, 15 * U, pal.content2, "Tri");
+        c.fonts->semibold.drawMid(b, bx, tabsY() + 15 * U, 15 * U, pal.content2, "Tri");
         for (int i = 0; i < 3; ++i) {
             const bool sel = i == tab_;
             const float tx = tabX(i), tw = tabW(i);
             if (sel) b.roundRect(tx, tabsY(), tw, 30 * U, 15 * U, pal.background1);
-            c.fonts->semibold.draw(b, tx + tw / 2, tabsY() + 6 * U, 16 * U, sel ? col::white : pal.light2, kTabs[i], gfx::Align::Center);
+            c.fonts->semibold.drawMid(b, tx + tw / 2, tabsY() + 15 * U, 16 * U, sel ? col::white : pal.light2, kTabs[i], gfx::Align::Center);
         }
         char line[64];
         snprintf(line, sizeof(line), "page %d", page_ + 1);
-        c.fonts->regular.draw(b, bx + bw, tabsY() + 6 * U, 16 * U, pal.content2, line, gfx::Align::Right);
+        c.fonts->regular.drawMid(b, bx + bw, tabsY() + 15 * U, 16 * U, pal.content2, line, gfx::Align::Right);
         // Aide manette.
         const float fy = kVH - 30 * U;
         b.roundRectGradient(0, fy - 30 * U, kVW, 60 * U, 0, gfx::Corners::vertical(alpha(pal.background6, 0), alpha(pal.background6, 0.95f)));
@@ -234,7 +234,7 @@ public:
         auto hint = [&](Pad p, const char *label) {
             padGlyph(c, p, hx + 10 * U, fy + 8 * U, 20 * U);
             hx += 26 * U;
-            hx += c.fonts->regular.draw(b, hx, fy, 15 * U, pal.content2, label) + 22 * U;
+            hx += c.fonts->regular.drawMid(b, hx, fy + 8 * U, 15 * U, pal.content2, label) + 22 * U;
         };
         hint(Pad::Cross, "télécharger");
         hint(Pad::L1, "");
@@ -324,7 +324,7 @@ private:
         const float py = y + kCardH - 24 * U;
         const float sw = c.fonts->bold.measure(11 * U, status) + 12 * U;
         b.roundRect(tx, py, sw, 15 * U, 7.5f * U, statusCol);
-        c.fonts->bold.draw(b, tx + sw / 2, py + 1.5f * U, 11 * U, alpha(col::black, 0.75f), status, gfx::Align::Center);
+        c.fonts->bold.drawMid(b, tx + sw / 2, py + 7.5f * U, 11 * U, alpha(col::black, 0.75f), status, gfx::Align::Center);
         float dx = tx + sw + 8 * U;
         for (size_t d = 0; d < s.diffs.size() && d < 14; ++d) {
             b.roundRect(dx, py + 1.5f * U, 7 * U, 12 * U, 3.5f * U, starColor(s.diffs[d].stars));

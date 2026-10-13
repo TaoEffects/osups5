@@ -136,7 +136,7 @@ void footerButton(Context &c, ButtonFx &fx, float x, float top, const char *glyp
                   bool active, float alpha = 1, int padHint = -1);
 constexpr float kFooterBtnW = 116 * U, kFooterBtnH = 75 * U, kFooterH = 50 * U;
 // Bouton de dialogue (pause) : boîte inclinée de largeur relative animée.
-void dialogButton(Context &c, ButtonFx &fx, Triangles &tri, float cx, float cy, float fullW, float h, const char *label,
+void dialogButton(Context &c, ButtonFx &fx, float cx, float cy, float fullW, float h, const char *label,
                   uint32_t color, float alpha = 1);
 
 
@@ -204,10 +204,6 @@ private:
     float bx_[4] = {};
     int hovered_ = -1;
 };
-
-// Fond triangulaire générique d'un panneau (masqué dans un rectangle arrondi).
-void trianglePanel(Context &c, Triangles &tri, float x, float y, float w, float h, float radius, uint32_t base,
-                   uint32_t dark, uint32_t light, float alpha, float shear = 0);
 
 // Texte avec ombre douce, et texte ellipsé dans une largeur.
 float text(Context &c, const gfx::Font &f, float x, float y, float size, uint32_t color, const std::string &s,

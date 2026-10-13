@@ -694,8 +694,8 @@ void Play::render(Context &ctx) {
             b.ring(hx, hy, radius_, radius_ * 0.09f, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha));
             char num[8];
             snprintf(num, sizeof(num), "%d", o.comboNumber);
-            ctx.fonts->semibold.draw(b, hx, hy - radius_ * 0.5f, radius_ * 0.9f, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha), num,
-                                     gfx::Align::Center);
+            ctx.fonts->semibold.drawMid(b, hx, hy, radius_ * 0.9f, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha), num,
+                                        gfx::Align::Center);
             if (!mods_.hidden && t < o.time) {
                 const float p = anim::clamp01(static_cast<float>((t - (o.time - preempt_)) / preempt_));
                 const float r = radius_ * (1.0f + 2.5f * (1.0f - p));
@@ -709,8 +709,8 @@ void Play::render(Context &ctx) {
             b.centered(ctx.tex->ringThick, hx, hy, radius_ * 2.0f, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha));
             char num[8];
             snprintf(num, sizeof(num), "%d", o.comboNumber);
-            ctx.fonts->bold.draw(b, hx, hy - radius_ * 0.62f, radius_ * 1.15f, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha), num,
-                                 gfx::Align::Center);
+            ctx.fonts->bold.drawMid(b, hx, hy, radius_ * 1.15f, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha), num,
+                                    gfx::Align::Center);
             if (!mods_.hidden && t < o.time) {
                 const float p = anim::clamp01(static_cast<float>((t - (o.time - preempt_)) / preempt_));
                 const float size = radius_ * 2.0f * (1.0f + 3.0f * (1.0f - p));

@@ -361,7 +361,7 @@ private:
         const uint32_t cols[3] = {col::green, col::yellowDark, hex(0xaa1b27)};
         for (int i = 0; i < n; ++i) {
             const int k = failMenu_ ? i + 1 : i;
-            dialogButton(c, fx_[i], tri_[i], kVW / 2, buttonY(i, n), kVW - 100 * U, 80 * U, labels[k], cols[k]);
+            dialogButton(c, fx_[i], kVW / 2, buttonY(i, n), kVW - 100 * U, 80 * U, labels[k], cols[k]);
         }
         // Infos (essais, progression).
         char line[96];
@@ -379,7 +379,6 @@ private:
     int cursor_ = 0;
     Tween menuA_{0}, fade_{0};
     ButtonFx fx_[3];
-    Triangles tri_[3] = {Triangles(11), Triangles(12), Triangles(13)};
 };
 
 // ------------------------------------------------------------------ Résultats
@@ -505,7 +504,7 @@ public:
             const float modsW = mods.empty() ? 0 : 30 * U;
             float rx = kVW / 2 - (pillW + modsW) / 2;
             starPill(c, rx, y, 15 * U, diff->stars, 1, diff->stars >= 0);
-            if (!mods.empty()) c.fonts->bold.draw(b, rx + pillW + 8 * U, y, 13 * U, col::yellow, mods.c_str());
+            if (!mods.empty()) c.fonts->bold.drawMid(b, rx + pillW + 8 * U, y + 7.5f * U, 13 * U, col::yellow, mods.c_str());
             y += 20 * U;
             text(c, c.fonts->semibold, kVW / 2, y, 16 * U, col::white, diff->version, gfx::Align::Center, pw - 20 * U);
             y += 20 * U;
@@ -537,7 +536,7 @@ public:
                 b.pushAlpha(fa);
                 const float hw = cw - 8 * U;
                 b.roundRect(cx - hw / 2, ry, hw, 12 * U, 6 * U, hex(0x222222));
-                c.fonts->semibold.draw(b, cx, ry - 0.5f * U, 10 * U, st[i].color == col::white ? col::white : st[i].color, st[i].head,
+                c.fonts->semibold.drawMid(b, cx, ry + 6 * U, 10 * U, st[i].color == col::white ? col::white : st[i].color, st[i].head,
                                        gfx::Align::Center);
                 c.fonts->regular.draw(b, cx, ry + 15 * U, 20 * U, col::white, st[i].value.c_str(), gfx::Align::Center);
                 b.popTransform();
@@ -565,7 +564,7 @@ private:
         b.roundRect(x, y, w, h, 7 * U, lighten(hex(0x444444), 0.3f * hv), kShear);
         b.roundRect(x, y + h - 4 * U, w, 4 * U, 2 * U, accent, kShear);
         icon(c, glyph, x + 24 * U, y + h / 2, 16 * U, accent);
-        c.fonts->semibold.draw(b, x + 44 * U, y + 10 * U, 16 * U, col::white, label);
+        c.fonts->semibold.drawMid(b, x + 44 * U, y + h / 2, 16 * U, col::white, label);
         padGlyph(c, pad, x + w - 20 * U, y + h / 2, 22 * U);
     }
 
@@ -605,7 +604,7 @@ private:
             const uint32_t rc = rankColor(kRanks[i]);
             if (glow > 0) b.shadow(bx - 14 * U, by - 7 * U, 28 * U, 14 * U, 7 * U, 10 * U, alpha(rc, 0.6f * glow * ba));
             b.roundRect(bx - 14 * U, by - 7 * U, 28 * U, 14 * U, 7 * U, alpha(rc, ba));
-            c.fonts->bold.draw(b, bx, by - 6 * U, 11 * U, alpha(darken(rc, 2.5f), ba), kRanks[i], gfx::Align::Center);
+            c.fonts->bold.drawMid(b, bx, by, 11 * U, alpha(darken(rc, 2.5f), ba), kRanks[i], gfx::Align::Center);
         }
         // Lettre du rang (à 1950 ms).
         if (t >= 1950) {
@@ -627,8 +626,9 @@ private:
                 }
             }
             const float size = 76 * U * 1.25f * sc;
-            c.fonts->bold.drawSdf(b, cx, cy - size * 0.6f + dy, size, alpha(rc, 0.6f * la), rank.c_str(), gfx::Align::Center, -8 * U, 0.1f, 0.25f);
-            c.fonts->bold.draw(b, cx, cy - size * 0.6f + dy, size, alpha(lighten(rc, 0.3f), la), rank.c_str(), gfx::Align::Center, -8 * U);
+            const float rankTop = c.fonts->bold.topForCenter(cy, size);
+            c.fonts->bold.drawSdf(b, cx, rankTop + dy, size, alpha(rc, 0.6f * la), rank.c_str(), gfx::Align::Center, -8 * U, 0.1f, 0.25f);
+            c.fonts->bold.draw(b, cx, rankTop + dy, size, alpha(lighten(rc, 0.3f), la), rank.c_str(), gfx::Align::Center, -8 * U);
             if (r_.failed) c.fonts->bold.drawShadow(b, cx, cy + R * 0.42f, 16 * U, col::red1, "ÉCHEC", gfx::Align::Center);
         }
         b.popTransform();

@@ -51,6 +51,7 @@ class Game {
 public:
     bool init();
     void frame(const plat::InputState &raw, double now);
+    void reportSwap(double swapMs);
     void shutdown();
     bool wantsExit() const { return exit_; }
     void requestExit() { exit_ = true; }
@@ -141,6 +142,8 @@ private:
     std::unique_ptr<Screen> overlay_, overlayLeaving_;
     double overlayLeaveUntil_ = 0;
     bool exit_ = false;
+    double perfLast_ = 0, perfUpdate_ = 0, perfBuild_ = 0, perfSubmit_ = 0, perfSwap_ = 0, perfFrameMax_ = 0, perfSwapMax_ = 0;
+    int perfFrames_ = 0;
     void handleToolbar(const UiInput &in);
     void handleDownloads();
     std::vector<const net::DownloadState *> handledDownloads_;
@@ -150,7 +153,6 @@ private:
     double bgFadeStart_ = -10, bgBlurFadeStart_ = -10;
     uint64_t bgTicket_ = 0, bgBlurTicket_ = 0;
     anim::Tween bgDim_{0.3f}, bgBlur_{0};
-    lz::Triangles bgTriangles_{99};
     std::string bgPath_;
     std::string previewAudio_;
 

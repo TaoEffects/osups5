@@ -127,7 +127,8 @@ uint32_t modTypeColor(int type) {
 }
 
 void icon(Context &c, const char *glyph, float cx, float cy, float size, uint32_t color) {
-    c.fonts->icons.draw(*c.batch, cx, cy - size * 0.5f, size, color, glyph, gfx::Align::Center);
+    // Centrage sur la boîte réelle de l'icône (les icônes n'ont pas toutes la même forme).
+    c.fonts->icons.drawGlyphCentered(*c.batch, glyph, cx, cy, size, color);
 }
 
 void spinner(Context &c, float cx, float cy, float size, float a) {
@@ -135,17 +136,16 @@ void spinner(Context &c, float cx, float cy, float size, float a) {
     // Rotation continue (un tour en 3150 ms), comme LoadingSpinner.
     const float angle = static_cast<float>(std::fmod(ms(c), 3150.0) / 3150.0 * 2 * anim::kPi);
     gfx::SpriteBatch &b = *c.batch;
-    const float r = size * 0.42f, th = size * 0.13f;
-    // Arc de 300° dessiné en petits segments arrondis.
-    const int n = 40;
-    for (int i = 0; i < n; ++i) {
-        const float t0 = angle + static_cast<float>(i) / n * 5.24f;
-        const float t1 = angle + static_cast<float>(i + 1) / n * 5.24f;
-        b.line(cx + std::cos(t0) * r, cy + std::sin(t0) * r, cx + std::cos(t1) * r, cy + std::sin(t1) * r, th,
-               alpha(col::white, a));
+    // Arc de 300° (un seul quad) qui tourne : un tour en 3150 ms, comme LoadingSpinner.
+    const float turn = static_cast<float>(std::fmod(ms(c), 3150.0) / 3150.0);
+    const float r = size * 0.5f, th = size * 0.14f;
+    const uint32_t col = alpha(col::white, a);
+    if (turn + 0.833f <= 1.0f) {
+        b.arc(cx, cy, r, th, turn, turn + 0.833f, gfx::Corners::solid(col));
+    } else {
+        b.arc(cx, cy, r, th, turn, 1.0f, gfx::Corners::solid(col));
+        b.arc(cx, cy, r, th, 0, turn + 0.833f - 1.0f, gfx::Corners::solid(col));
     }
-    b.circle(cx + std::cos(angle) * r, cy + std::sin(angle) * r, th * 0.5f, alpha(col::white, a));
-    b.circle(cx + std::cos(angle + 5.24f) * r, cy + std::sin(angle + 5.24f) * r, th * 0.5f, alpha(col::white, a));
 }
 
 float starPill(Context &c, float x, float y, float h, float stars, float a, bool known) {
@@ -161,7 +161,7 @@ float starPill(Context &c, float x, float y, float h, float stars, float a, bool
     const uint32_t fg = known ? starTextColor(stars) : gfx::rgba(0, 0, 0, 191);
     c.batch->roundRect(x, y, w, h, h * 0.5f, alpha(bg, a));
     icon(c, fa::star, x + h * 0.55f + h * 0.32f, y + h * 0.5f, h * 0.62f, gfx::withAlpha(fg, a));
-    c.fonts->bold.draw(*c.batch, x + h * 0.55f + h * 0.8f, y + (h - ts) * 0.5f - ts * 0.04f, ts, gfx::withAlpha(fg, a), buf);
+    c.fonts->bold.drawMid(*c.batch, x + h * 0.55f + h * 0.8f, y + h * 0.5f, ts, gfx::withAlpha(fg, a), buf);
     return w;
 }
 
@@ -171,7 +171,8 @@ void modIcon(Context &c, const char *acr, float cx, float cy, float h, uint32_t 
     b.shadow(cx - w / 2, cy - h / 2 + h * 0.06f, w, h, h * 0.28f, h * 0.12f, gfx::rgba(0, 0, 0, static_cast<uint8_t>(70 * a)), kShear);
     b.roundRect(cx - w / 2, cy - h / 2, w, h, h * 0.28f, alpha(darken(color, 0.9f), a), kShear);
     b.roundRectBorder(cx - w / 2, cy - h / 2, w, h, h * 0.28f, h * 0.07f, alpha(color, a), kShear);
-    c.fonts->bold.draw(*c.batch, cx, cy - h * 0.29f, h * 0.56f, alpha(color, a), acr, gfx::Align::Center);
+    // Le sigle suit l'inclinaison : décalage nul au centre.
+    c.fonts->bold.drawMid(*c.batch, cx, cy, h * 0.56f, alpha(color, a), acr, gfx::Align::Center);
 }
 
 // ---------------------------------------------------------------- Triangles
@@ -225,18 +226,6 @@ void Triangles::draw(Context &c, float x, float y, uint32_t dark, uint32_t light
     }
 }
 
-void trianglePanel(Context &c, Triangles &tri, float x, float y, float w, float h, float radius, uint32_t base,
-                   uint32_t dark, uint32_t light, float a, float shear) {
-    gfx::SpriteBatch &b = *c.batch;
-    b.roundRect(x, y, w, h, radius, alpha(base, a), shear);
-    tri.update(w + h * shear, h, c.dt * 1000);
-    b.beginMask();
-    b.roundRect(x, y, w, h, radius, col::white, shear);
-    b.useMask();
-    tri.draw(c, x - h * shear * 0.5f, y, dark, light, a);
-    b.endMask();
-}
-
 // ---------------------------------------------------------------- Boutons
 
 void ButtonFx::setHover(const Context &c, bool h, double inMs, double outMs, Ease e) {
@@ -274,7 +263,7 @@ void backButton(Context &c, ButtonFx &fx, float x, float bottom, const char *lab
     const float total = 17 * U + 20 * U + lw;
     const float cx0 = x + w / 2 - total / 2 - 10 * U;
     icon(c, fa::chevron_left, cx0 + 8 * U, y + h / 2, 17 * U, col::white);
-    c.fonts->semibold.draw(b, cx0 + 17 * U + 20 * U, y + h / 2 - ts * 0.55f, ts, col::white, label);
+    c.fonts->semibold.drawMid(b, cx0 + 17 * U + 20 * U, y + h / 2, ts, col::white, label);
     b.popTransform();
 }
 
@@ -304,15 +293,15 @@ void footerButton(Context &c, ButtonFx &fx, float x, float top, const char *glyp
     }
     // Le contenu suit l'inclinaison : décalé selon sa hauteur.
     auto sx = [&](float yy) { return x + w / 2 - kShear * (yy - (top + h / 2)); };
-    icon(c, glyph, sx(top + 18 * U), top + 18 * U, 16 * U, ic);
+    icon(c, glyph, sx(top + 20 * U), top + 20 * U, 16 * U, ic);
     const float ts = 16 * U;
-    c.fonts->semibold.draw(b, sx(top + 43 * U), top + 35 * U, ts, fg, label, gfx::Align::Center);
+    c.fonts->semibold.drawMid(b, sx(top + 43 * U), top + 43 * U, ts, fg, label, gfx::Align::Center);
     b.roundRect(sx(top + h - 12.5f * U) - 50 * U, top + h - 15 * U, 100 * U, 5 * U, 3 * U, ic, kShear);
     if (padHint >= 0) padGlyph(c, static_cast<Pad>(padHint), sx(top + 12 * U) + w / 2 - 16 * U, top + 12 * U, 15 * U, 0.8f);
     b.popTransform();
 }
 
-void dialogButton(Context &c, ButtonFx &fx, Triangles &tri, float cx, float cy, float fullW, float h, const char *label,
+void dialogButton(Context &c, ButtonFx &fx, float cx, float cy, float fullW, float h, const char *label,
                   uint32_t color, float a) {
     const double t = ms(c);
     gfx::SpriteBatch &b = *c.batch;
@@ -332,18 +321,12 @@ void dialogButton(Context &c, ButtonFx &fx, Triangles &tri, float cx, float cy, 
     }
     b.shadow(x, y, w, h, 5 * U, 6 * U, gfx::rgba(0, 0, 0, 13), kShear);
     b.roundRect(x, y, w, h, 5 * U, color, kShear);
-    tri.update(w + h * kShear, h, c.dt * 1000);
-    b.beginMask();
-    b.roundRect(x, y, w, h, 5 * U, col::white, kShear);
-    b.useMask();
-    b.setBlend(gfx::Blend::Additive);
-    tri.draw(c, x - h * kShear * 0.5f, y, alpha(col::white, 0.0f), alpha(col::white, 0.1f), 1);
-    b.setBlend(gfx::Blend::Alpha);
-    b.endMask();
+    // Léger reflet vertical à la place des triangles.
+    b.roundRectGradient(x, y, w, h, 5 * U, gfx::Corners::vertical(alpha(col::white, 0.12f), alpha(col::white, 0)), kShear);
     const float fl = fx.flash.at(t);
     if (fl > 0) b.roundRect(x, y, w, h, 5 * U, alpha(col::white, fl * 0.05f), kShear);
     const float ts = 28 * U * (1 + 0.02f * hv);
-    c.fonts->bold.drawShadow(b, cx, cy - ts * 0.55f, ts, col::white, label, gfx::Align::Center, ts * 0.4f * hv * 0.35f);
+    c.fonts->bold.drawShadow(b, cx, c.fonts->bold.topForCenter(cy, ts), ts, col::white, label, gfx::Align::Center, ts * 0.4f * hv * 0.35f);
     b.popTransform();
 }
 
@@ -362,7 +345,7 @@ void padGlyph(Context &c, Pad p, float cx, float cy, float s, float a) {
     case Pad::Options: icon(c, fa::bars, cx, cy, s * 0.5f, alpha(col::white, a)); break;
     default: {
         const char *t = p == Pad::L1 ? "L1" : p == Pad::R1 ? "R1" : p == Pad::L2 ? "L2" : "R2";
-        c.fonts->bold.draw(b, cx, cy - s * 0.3f, s * 0.55f, alpha(col::white, a), t, gfx::Align::Center);
+        c.fonts->bold.drawMid(b, cx, cy, s * 0.5f, alpha(col::white, a), t, gfx::Align::Center);
     }
     }
 }
@@ -472,18 +455,9 @@ void Logo::draw(Context &c) {
     b.circle(px, py + R * 0.02f, full * 0.99f, gfx::rgba(0, 0, 0, static_cast<uint8_t>(60 * a)), R * 0.04f);
     b.shape(1, px, py, R, R, R, 0, 0,
             gfx::Corners::vertical(alpha(hex(0xff66ab), a), alpha(hex(0xcc5289), a)));
-    if (triangles) {
-        tri_.spawnRatio = 1.4f;
-        tri_.scaleAdjust = 1.6f;
-        tri_.velocity = triVelocity_;
-        tri_.update(D, D, c.dt * 1000);
-        b.beginMask();
-        b.circle(px, py, R, col::white);
-        b.useMask();
-        tri_.draw(c, px - R, py - R, alpha(hex(0xff66ab), 0.0f), alpha(hex(0xb6346f), 0.9f), std::cbrt(a), 0.09f);
-        tri_.draw(c, px - R, py - R, alpha(hex(0xff7ab8), 0.0f), alpha(hex(0xff8cc3), 0.35f), std::cbrt(a), 0.0f);
-        b.endMask();
-    }
+    // Reflet doux en haut du disque (pas de triangles).
+    b.shape(1, px, py - R * 0.35f, R * 0.8f, R * 0.55f, R * 0.55f, 0, R * 0.25f,
+            gfx::Corners::vertical(alpha(col::white, 0.10f * a), alpha(col::white, 0)));
     const float fl = flash.at(t);
     if (fl > 0) {
         b.setBlend(gfx::Blend::Additive);
@@ -493,9 +467,10 @@ void Logo::draw(Context &c) {
     // Anneau blanc épais et nom au centre.
     b.ring(px, py, full * 0.985f, full * 0.075f, alpha(col::white, a));
     const float ts = D * 0.25f;
-    c.fonts->bold.drawSdf(b, px, py - ts * 0.6f + D * 0.012f, ts, gfx::rgba(0, 0, 0, static_cast<uint8_t>(60 * a)), "rhythm",
+    const float ly = c.fonts->bold.topForCenter(py, ts);
+    c.fonts->bold.drawSdf(b, px, ly + D * 0.012f, ts, gfx::rgba(0, 0, 0, static_cast<uint8_t>(60 * a)), "rhythm",
                           gfx::Align::Center, -ts * 0.02f, 0.06f, 0.15f);
-    c.fonts->bold.draw(b, px, py - ts * 0.6f, ts, alpha(col::white, a), "rhythm", gfx::Align::Center, -ts * 0.02f);
+    c.fonts->bold.draw(b, px, ly, ts, alpha(col::white, a), "rhythm", gfx::Align::Center, -ts * 0.02f);
     // Impact (anneau qui s'élargit).
     const float ia = impactAlpha.at(t);
     if (ia > 0) b.ring(px, py, R * impactScale.at(t) / 0.94f, 10 * U * s, alpha(col::white, ia * a));
@@ -589,7 +564,7 @@ void Toolbar::draw(Context &c) {
             float tx = bx_[i] + kHeight / 2 - tw / 2;
             tx = std::clamp(tx, 8.0f, kVW - tw - 8);
             b.roundRect(tx - 8, y + kHeight + 6, tw + 16, ts + 14, 6, alpha(gfx::rgba(0, 0, 0, 200), hv));
-            c.fonts->bold.draw(b, tx, y + kHeight + 12, ts, alpha(col::white, hv), tips[i]);
+            c.fonts->bold.drawMid(b, tx, y + kHeight + 6 + (ts + 14) / 2, ts, alpha(col::white, hv), tips[i]);
         }
     }
 #if !defined(__PROSPERO__)
@@ -599,7 +574,7 @@ void Toolbar::draw(Context &c) {
     localtime_r(&now, &lt);
     char buf[16];
     snprintf(buf, sizeof(buf), "%02d:%02d", lt.tm_hour, lt.tm_min);
-    c.fonts->semibold.draw(b, kVW - 20 * U, y + kHeight / 2 - 9 * U, 18 * U, col::white, buf, gfx::Align::Right);
+    c.fonts->semibold.drawMid(b, kVW - 20 * U, y + kHeight / 2, 18 * U, col::white, buf, gfx::Align::Right);
 #endif
     b.popTransform();
 }

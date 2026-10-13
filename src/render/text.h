@@ -38,6 +38,15 @@ public:
     std::string ellipsize(float size, const std::string &text, float maxWidth) const;
     // Hauteur des capitales (pour centrer verticalement), en fraction de la taille.
     float capHeight() const { return capHeight_; }
+    // Ordonnée du haut de ligne qui centre les capitales sur `cy`.
+    float topForCenter(float cy, float size) const { return cy + capHeight_ * size * 0.5f - ascent_ * size / bakePx_; }
+    // Texte centré verticalement sur cy (hauteur des capitales).
+    float drawMid(SpriteBatch &batch, float x, float cy, float size, uint32_t color, const char *utf8,
+                  Align align = Align::Left, float spacing = 0) const {
+        return draw(batch, x, topForCenter(cy, size), size, color, utf8, align, spacing);
+    }
+    // Un seul glyphe centré exactement (boîte réelle du dessin) en (cx, cy) : icônes.
+    void drawGlyphCentered(SpriteBatch &batch, const char *utf8, float cx, float cy, float size, uint32_t color) const;
 
 private:
     struct Glyph {

@@ -45,6 +45,7 @@ bool Settings::load(const std::string &path) {
         else if (key == "mirror" && !value.empty()) mirror = value;
         else if (key == "first_run_done") firstRunDone = i != 0;
         else if (key == "skin") skin = i == 1 ? 1 : 0;
+        else if (key == "msaa") msaa = i != 0;
     }
     LOG("settings: charges depuis %s (refresh %d Hz)", path.c_str(), refreshHz);
     return true;
@@ -55,10 +56,10 @@ bool Settings::save(const std::string &path) const {
     const int n = snprintf(buf, sizeof(buf),
                            "refresh_hz=%d\nbackground_dim=%.2f\nshow_debug=%d\nhit_error_bar=%d\nmaster_volume=%.2f\n"
                            "music_volume=%.2f\neffects_volume=%.2f\noffset_ms=%d\ncursor_speed=%.0f\ncursor_curve=%.2f\n"
-                           "touchpad_absolute=%d\nlast_set=%s\nlast_difficulty=%d\nmirror=%s\nfirst_run_done=%d\nskin=%d\n",
+                           "touchpad_absolute=%d\nlast_set=%s\nlast_difficulty=%d\nmirror=%s\nfirst_run_done=%d\nskin=%d\nmsaa=%d\n",
                            refreshHz, backgroundDim, showDebug, showHitErrorBar, masterVolume, musicVolume,
                            effectsVolume, offsetMs, cursorSpeed, cursorCurve, touchpadAbsolute, lastSetFolder.c_str(),
-                           lastDifficulty, mirror.c_str(), firstRunDone, skin);
+                           lastDifficulty, mirror.c_str(), firstRunDone, skin, msaa);
     if (n <= 0 || n >= static_cast<int>(sizeof(buf))) return false;
     return fsu::writeFileAtomic(path, buf, static_cast<size_t>(n));
 }

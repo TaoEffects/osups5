@@ -76,7 +76,9 @@ int main() {
     while (!app.wantsExit()) {
         plat::pollInput(input);
         app.frame(input, plat::nowSeconds());
+        const double swapStart = plat::nowSeconds();
         plat::swapBuffers();
+        app.reportSwap((plat::nowSeconds() - swapStart) * 1000);
     }
 
     LOG("sortie demandee");
