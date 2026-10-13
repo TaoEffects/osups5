@@ -151,3 +151,19 @@ Cette décision t'appartient : on en reparle après le premier test console.
 - Les affirmations du brief sur Relapse (firmwares 7.00–13.60) : non revérifiées ici,
   sans incidence sur le code. Seul compte le fait que ShadowMountPlus (ou équivalent)
   fonctionne sur ton firmware.
+
+## Résultats du 1er test console (13/10/2026, PS5 en 12.70, titre en dossier)
+
+- ✅ Démarrage, EGL 1.4, **OpenGL 4.6 core Mesa 26.2.0 « PS5 AGC »**, 1920x1080 @ 60 Hz.
+- ✅ **60,0 FPS stables**, image max 17–20 ms, **0 saccade** sur 90 s.
+- ✅ Audio : blocs de 256 trames réguliers (5,33 ms en moyenne, pire 10,4 ms), horloge
+  audio stable (écart constant d'environ +11 ms, sans dérive).
+- ✅ Manette (boutons, sticks, pavé tactile), réseau, lecture des assets.
+- ✅ Pile du thread principal : 2 Mo.
+- ⚠️ La 1re version plantait juste après l'ouverture de la manette. La différence avec la
+  version qui marche : **clavier USB désactivé** (et titre en dossier au lieu de .ffpkg).
+  Suspect principal : `sceKeyboardOpen` → à retester isolément.
+- ⚠️ Le rapport de plantage arrive bien, mais les registres lus (rip, rsp) sont faux sur
+  PS5 : la structure `ucontext` de la console ne correspond pas à celle de FreeBSD. À corriger.
+- Système de fichiers : `opendir` refusé partout (EPERM). Écriture possible dans
+  `/download0`, `/data` et `/data/homebrew`. `/mnt/usb0` existe mais n'est pas inscriptible.
