@@ -67,13 +67,14 @@ bool Mirror::takeCover(int &setId, gfx::ImageData &image) {
     return true;
 }
 
-std::shared_ptr<DownloadState> Mirror::download(const RemoteSet &set) {
+std::shared_ptr<DownloadState> Mirror::download(const RemoteSet &set, bool quiet) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto &d : downloads_)
         if (d->setId == set.id && d->phase.load() != 4) return d;
     auto d = std::make_shared<DownloadState>();
     d->setId = set.id;
-    d->label = set.artist + " - " + set.title;
+    d->quiet = quiet;
+    d->label = set.title.empty() ? "map " + std::to_string(set.id) : set.artist + " - " + set.title;
     downloads_.push_back(d);
     downloadJobs_.emplace_back(d, set);
     return d;
@@ -142,6 +143,29 @@ void Mirror::loop() {
     }
 }
 
+RemoteSet parseSet(const json::Value &v) {
+    RemoteSet s;
+    s.id = static_cast<int>(v["id"].num());
+    s.title = v["title"].str();
+    s.artist = v["artist"].str();
+    s.creator = v["creator"].str();
+    s.status = v["status"].str();
+    s.bpm = v["bpm"].num();
+    s.playCount = static_cast<long long>(v["play_count"].num());
+    s.favourites = static_cast<long long>(v["favourite_count"].num());
+    s.coverUrl = v["covers"]["card@2x"].str();
+    for (const json::Value &b : v["beatmaps"].a) {
+        RemoteDiff d;
+        d.id = static_cast<int>(b["id"].num());
+        d.version = b["version"].str();
+        d.stars = static_cast<float>(b["difficulty_rating"].num());
+        d.mode = static_cast<int>(b["mode_int"].num());
+        if (b["total_length"].num() > s.lengthSec) s.lengthSec = static_cast<int>(b["total_length"].num());
+        if (d.mode == 0) s.diffs.push_back(d);
+    }
+    return s;
+}
+
 void Mirror::doSearch() {
     std::string query;
     Sort sort;
@@ -182,25 +206,7 @@ void Mirror::doSearch() {
             error = "reponse illisible (" + jerr + ")";
         } else {
             for (const json::Value &v : root.a) {
-                RemoteSet s;
-                s.id = static_cast<int>(v["id"].num());
-                s.title = v["title"].str();
-                s.artist = v["artist"].str();
-                s.creator = v["creator"].str();
-                s.status = v["status"].str();
-                s.bpm = v["bpm"].num();
-                s.playCount = static_cast<long long>(v["play_count"].num());
-                s.favourites = static_cast<long long>(v["favourite_count"].num());
-                s.coverUrl = v["covers"]["card@2x"].str();
-                for (const json::Value &b : v["beatmaps"].a) {
-                    RemoteDiff d;
-                    d.id = static_cast<int>(b["id"].num());
-                    d.version = b["version"].str();
-                    d.stars = static_cast<float>(b["difficulty_rating"].num());
-                    d.mode = static_cast<int>(b["mode_int"].num());
-                    if (b["total_length"].num() > s.lengthSec) s.lengthSec = static_cast<int>(b["total_length"].num());
-                    if (d.mode == 0) s.diffs.push_back(d);
-                }
+                RemoteSet s = parseSet(v);
                 if (s.id > 0 && !s.diffs.empty()) sets.push_back(std::move(s));
             }
         }
@@ -214,8 +220,20 @@ void Mirror::doSearch() {
     searchBusy_.store(false);
 }
 
-void Mirror::doDownload(const std::shared_ptr<DownloadState> &d, const RemoteSet &set) {
+void Mirror::doDownload(const std::shared_ptr<DownloadState> &d, const RemoteSet &requested) {
     d->phase.store(1);
+    RemoteSet set = requested;
+    if (set.title.empty()) {
+        // Seul l'identifiant est connu (maps de base) : on demande les infos au miroir.
+        Response info = get(base_ + "/api/v2/s/" + std::to_string(set.id), 4u << 20, nullptr, &cancelAll_);
+        json::Value root;
+        if (info.ok() && json::parse(std::string(info.body.begin(), info.body.end()), root, nullptr) &&
+            root.type == json::Value::Object) {
+            const RemoteSet full = parseSet(root);
+            if (full.id == set.id) set = full;
+        }
+        if (!set.title.empty()) d->label = set.artist + " - " + set.title;
+    }
     const std::string tmp = songsDir_ + "/" + std::to_string(set.id) + ".osz.part";
     const int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
@@ -250,7 +268,8 @@ void Mirror::doDownload(const std::shared_ptr<DownloadState> &d, const RemoteSet
         return;
     }
     d->phase.store(2);
-    const std::string folder = fsu::sanitizeName(std::to_string(set.id) + " " + set.artist + " - " + set.title);
+    const std::string folder =
+        fsu::sanitizeName(set.title.empty() ? std::to_string(set.id) : std::to_string(set.id) + " " + set.artist + " - " + set.title);
     std::string error;
     if (!extractOsz(tmp, songsDir_ + "/" + folder, error)) {
         d->error = error;

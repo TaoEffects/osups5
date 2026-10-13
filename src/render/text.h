@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Texte TrueType (police Inter, licence OFL) : glyphes précalculés une fois dans un
-// atlas 1 canal, puis dessinés comme des sprites du lot courant.
+// Texte TrueType (polices libres OFL) rendu en champ de distance signé : chaque
+// glyphe est précalculé une fois dans un atlas 1 canal, et le shader en tire des
+// bords nets à n'importe quelle taille (plus de texte flou ou pixelisé quand on
+// l'agrandit). Crénage de la police appliqué.
 #pragma once
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "render/batch.h"
 
@@ -14,32 +17,48 @@ enum class Align { Left, Center, Right };
 
 class Font {
 public:
-    // bakePx : taille de référence de l'atlas ; le texte peut être dessiné plus petit.
-    bool load(const std::string &path, float bakePx, int atlasW, int atlasH);
+    // fallback : police consultée pour les caractères absents (peut être vide).
+    // allGlyphs : charge tous les glyphes de la police (police d'icônes).
+    bool load(const std::string &path, const std::string &fallback = "", bool allGlyphs = false);
     void shutdown();
     bool loaded() const { return atlas_.id != 0; }
 
     // (x, y) = coin haut gauche de la ligne. Renvoie la largeur dessinée.
+    // spacing : espacement supplémentaire entre lettres (pixels, à cette taille).
     float draw(SpriteBatch &batch, float x, float y, float size, uint32_t color, const char *utf8,
-               Align align = Align::Left) const;
+               Align align = Align::Left, float spacing = 0) const;
+    // Ombre douce sous le texte, comme lazer.
     float drawShadow(SpriteBatch &batch, float x, float y, float size, uint32_t color, const char *utf8,
-                     Align align = Align::Left) const;
-    float measure(float size, const char *utf8) const;
+                     Align align = Align::Left, float spacing = 0) const;
+    // Variante bas niveau : épaississement / flou du champ de distance.
+    float drawSdf(SpriteBatch &batch, float x, float y, float size, uint32_t color, const char *utf8, Align align,
+                  float spacing, float dilate, float soft) const;
+    float measure(float size, const char *utf8, float spacing = 0) const;
     // Coupe le texte avec "…" pour tenir dans maxWidth.
     std::string ellipsize(float size, const std::string &text, float maxWidth) const;
+    // Hauteur des capitales (pour centrer verticalement), en fraction de la taille.
+    float capHeight() const { return capHeight_; }
 
 private:
     struct Glyph {
-        float x0, y0, x1, y1;      // position relative (pixels de l'atlas, à la taille bakePx)
+        float x0, y0, x1, y1;  // boîte du bitmap relative au crayon (pixels à bakePx, y depuis le haut de ligne)
         float u0, v0, u1, v1;
         float advance;
+        int index;             // index du glyphe dans sa police (crénage)
+        bool fallback;
     };
     const Glyph *find(unsigned cp) const;
+    float kern(const Glyph *a, const Glyph *b) const;
 
     Texture atlas_;
-    float bakePx_ = 0;
+    float bakePx_ = 48;
     float ascent_ = 0;
+    float capHeight_ = 0.7f;
+    float scale_ = 1;  // unités de la police -> pixels à bakePx
+    std::vector<uint8_t> ttf_;
+    std::vector<uint8_t> info_;  // stbtt_fontinfo (opaque ici)
     std::unordered_map<unsigned, Glyph> glyphs_;
+    mutable std::unordered_map<uint64_t, float> kernCache_;
 };
 
 // Décode un point de code UTF-8 et avance le pointeur.

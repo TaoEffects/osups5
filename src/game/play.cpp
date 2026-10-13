@@ -42,6 +42,8 @@ float Mods::scoreMultiplier() const {
     if (easy) m *= 0.5f;
     if (hardRock) m *= 1.06f;
     if (hidden) m *= 1.06f;
+    if (doubleTime || nightcore) m *= 1.12f;
+    if (halfTime) m *= 0.3f;
     return m;
 }
 
@@ -49,7 +51,10 @@ std::string Mods::label() const {
     std::string s;
     if (easy) s += "EZ ";
     if (noFail) s += "NF ";
+    if (halfTime) s += "HT ";
     if (hidden) s += "HD ";
+    if (nightcore) s += "NC ";
+    else if (doubleTime) s += "DT ";
     if (autoplay) s += "AUTO ";
     if (hardRock) s += "HR ";
     if (!s.empty()) s.pop_back();
@@ -130,6 +135,7 @@ bool Play::start(Context &ctx, Beatmap map, const Mods &mods, const gfx::Texture
     startTime_ = std::min({0.0, firstObject_ - preempt_ - 1500.0, -static_cast<double>(map_.audioLeadIn)});
     ctx.music->setLoop(false, 0);
     ctx.music->setVolume(ctx.settings->musicVolume);
+    ctx.music->setRate(mods_.rate(), !mods_.nightcore);
     ctx.music->play(startTime_ / 1000.0);
 
     sliderTarget_.destroy();
@@ -160,7 +166,10 @@ void Play::stop(Context &ctx) {
     sliderTarget_.destroy();
 }
 
-double Play::gameTime(Context &ctx) const { return ctx.music->time(*ctx.mixer) * 1000.0 - ctx.settings->offsetMs; }
+// Le décalage audio est une latence en temps réel : en DT il couvre plus de temps de morceau.
+double Play::gameTime(Context &ctx) const {
+    return ctx.music->time(*ctx.mixer) * 1000.0 - ctx.settings->offsetMs * mods_.rate();
+}
 
 double Play::progress() const {
     if (lastObject_ <= firstObject_) return 0;
@@ -172,7 +181,7 @@ bool Play::canSkip() const { return !paused_ && firstObject_ - preempt_ - lastT_
 void Play::skip(Context &ctx) {
     if (!canSkip()) return;
     const double target = firstObject_ - preempt_ - 1200;
-    ctx.music->play((target + ctx.settings->offsetMs) / 1000.0);
+    ctx.music->play((target + ctx.settings->offsetMs * mods_.rate()) / 1000.0);
     LOG("play: intro passee -> %.0f ms", target);
 }
 
@@ -497,8 +506,9 @@ void Play::finishResult() {
     if (!errors_.empty()) mean /= static_cast<double>(errors_.size());
     double var = 0;
     for (float e : errors_) var += (e - mean) * (e - mean);
-    r.meanError = mean;
-    r.unstableRate = errors_.size() > 1 ? std::sqrt(var / static_cast<double>(errors_.size() - 1)) * 10.0 : 0;
+    // En temps réel (comme lazer) : en DT, 10 ms de morceau ne durent que 6,7 ms.
+    r.meanError = mean / mods_.rate();
+    r.unstableRate = errors_.size() > 1 ? std::sqrt(var / static_cast<double>(errors_.size() - 1)) * 10.0 / mods_.rate() : 0;
     const double p300 = total > 0 ? static_cast<double>(n300_) / total : 1;
     const double p50 = total > 0 ? static_cast<double>(n50_) / total : 0;
     if (failed_) r.rank = "F";
@@ -527,12 +537,19 @@ void Play::renderSliderBody(Context &ctx, const HitObject &o, float alpha, uint3
     std::vector<Vec2> pts;
     pts.reserve(static_cast<size_t>(count));
     for (int k = 0; k < count; ++k) pts.push_back(o.positionAt(static_cast<float>(k) / static_cast<float>(count - 1)));
+    const bool flat = ctx.settings->skin == 0;
     for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 2.0f, gfx::rgba(255, 255, 255));
-    const uint32_t inner = scaleRgb(color, 0.32f);
-    for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 1.76f, inner);
-    // Liseré clair au centre, façon lazer.
-    const uint32_t centre = scaleRgb(color, 0.45f);
-    for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 0.9f, centre);
+    if (flat) {
+        // Épuré : corps presque noir, à peine teinté, bord blanc fin.
+        const uint32_t inner = scaleRgb(color, 0.12f);
+        for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 1.84f, inner);
+    } else {
+        const uint32_t inner = scaleRgb(color, 0.32f);
+        for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 1.76f, inner);
+        // Liseré clair au centre, façon lazer.
+        const uint32_t centre = scaleRgb(color, 0.45f);
+        for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 0.9f, centre);
+    }
     b.setTarget(nullptr);
     b.setBlend(gfx::Blend::Premultiplied);
     const uint8_t a = static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 0.92f * 255.0f);
@@ -551,9 +568,12 @@ void Play::render(Context &ctx) {
         const float k = std::max(kVW / bw, kVH / bh);
         b.quad(*background_, (kVW - bw * k) / 2, (kVH - bh * k) / 2, bw * k, bh * k, gfx::rgba(255, 255, 255));
     }
-    float dim = ctx.settings->backgroundDim;
-    if (t < firstObject_ - preempt_) dim *= 0.85f;
-    b.rect(0, 0, kVW, kVH, gfx::rgba(0, 0, 0, static_cast<uint8_t>(dim * 255)));
+    // Sans image fournie, c'est le fond global du jeu (déjà assombri) qui sert.
+    if (background_) {
+        float dim = ctx.settings->backgroundDim;
+        if (t < firstObject_ - preempt_) dim *= 0.85f;
+        b.rect(0, 0, kVW, kVH, gfx::rgba(0, 0, 0, static_cast<uint8_t>(dim * 255)));
+    }
 
     // Objets : du plus tardif au plus proche (les plus proches au-dessus).
     int lastVisible = static_cast<int>(firstActive_);
@@ -563,6 +583,7 @@ void Play::render(Context &ctx) {
     int firstVisible = static_cast<int>(firstActive_);
     while (firstVisible > 0 && now - state_[static_cast<size_t>(firstVisible - 1)].doneAt < 0.5) --firstVisible;
 
+    const bool flat = ctx.settings->skin == 0;
     for (int idx = lastVisible - 1; idx >= firstVisible; --idx) {
         const size_t i = static_cast<size_t>(idx);
         const HitObject &o = map_.objects[i];
@@ -582,6 +603,23 @@ void Play::render(Context &ctx) {
             const float cx = toScreenX(256), cy = toScreenY(192);
             const float prog = s.required > 0 ? anim::clamp01(std::fabs(s.rotation) / (2 * kPi) / s.required) : 1;
             const float remain = anim::clamp01(static_cast<float>((o.endTime - t) / std::max(1.0, o.endTime - o.time)));
+            if (flat) {
+                // Épuré : anneau qui se referme, arc de progression, point central.
+                b.ring(cx, cy, 15 + 300 * remain, 3, gfx::withAlpha(gfx::rgba(255, 255, 255), fade * 0.8f));
+                b.ring(cx, cy, 240, 10, gfx::withAlpha(gfx::rgba(255, 255, 255), fade * 0.12f));
+                b.arc(cx, cy, 240, 10, 0, prog, gfx::Corners::solid(gfx::withAlpha(prog >= 1 ? gfx::rgba(140, 255, 160) : gfx::rgba(255, 255, 255), fade)));
+                const float ang = s.rotation;
+                b.circle(cx + std::cos(ang) * 225, cy + std::sin(ang) * 225, 9, gfx::withAlpha(gfx::rgba(255, 255, 255), fade));
+                b.circle(cx, cy, 8, gfx::withAlpha(gfx::rgba(255, 255, 255), fade));
+                char rpm[48];
+                snprintf(rpm, sizeof(rpm), "%.0f tr/min", s.rpm);
+                ctx.fonts->semibold.draw(b, cx, cy + 290, 26, gfx::withAlpha(gfx::rgba(255, 255, 255), fade * 0.8f), rpm, gfx::Align::Center);
+                if (s.bonusShown > 0 && static_cast<float>(s.bonusShown) > s.required) {
+                    snprintf(rpm, sizeof(rpm), "+%d", (s.bonusShown - static_cast<int>(s.required)) * 1000);
+                    ctx.fonts->semibold.draw(b, cx, cy - 120, 48, gfx::withAlpha(gfx::rgba(255, 255, 255), fade * 0.9f), rpm, gfx::Align::Center);
+                }
+                continue;
+            }
             b.centered(ctx.tex->spinner, cx, cy, 520, gfx::withAlpha(gfx::rgba(255, 255, 255), fade * 0.35f));
             b.rotated(ctx.tex->ringThick, cx, cy, 520 * (0.55f + 0.45f * prog), 520 * (0.55f + 0.45f * prog), s.rotation,
                       gfx::withAlpha(prog >= 1 ? gfx::rgba(140, 255, 160) : gfx::rgba(120, 200, 255), fade));
@@ -633,19 +671,37 @@ void Play::render(Context &ctx) {
                 if (t >= o.time && t <= o.endTime && !s.done) {
                     const Vec2 ball = o.ballPosition(t);
                     const float bx = toScreenX(ball.x), by = toScreenY(ball.y);
-                    if (s.tracking) {
-                        b.centered(ctx.tex->ring, bx, by, radius_ * 4.8f, gfx::withAlpha(gfx::rgba(255, 255, 255), 0.85f));
-                        b.centered(ctx.tex->glow, bx, by, radius_ * 4.0f, gfx::withAlpha(color, 0.35f));
+                    if (flat) {
+                        if (s.tracking) b.ring(bx, by, radius_ * 2.2f, radius_ * 0.07f, gfx::withAlpha(gfx::rgba(255, 255, 255), 0.8f));
+                        b.ring(bx, by, radius_ * 0.78f, radius_ * 0.16f, gfx::rgba(255, 255, 255));
+                    } else {
+                        if (s.tracking) {
+                            b.centered(ctx.tex->ring, bx, by, radius_ * 4.8f, gfx::withAlpha(gfx::rgba(255, 255, 255), 0.85f));
+                            b.centered(ctx.tex->glow, bx, by, radius_ * 4.0f, gfx::withAlpha(color, 0.35f));
+                        }
+                        b.centered(ctx.tex->disc, bx, by, radius_ * 1.7f, gfx::rgba(255, 255, 255));
+                        b.centered(ctx.tex->disc, bx, by, radius_ * 1.4f, color);
                     }
-                    b.centered(ctx.tex->disc, bx, by, radius_ * 1.7f, gfx::rgba(255, 255, 255));
-                    b.centered(ctx.tex->disc, bx, by, radius_ * 1.4f, color);
                 }
             }
         }
 
         // Cercle (ou tête de slider).
         const bool headPending = !s.headDone && !(o.type == kCircle && s.done);
-        if (headPending && alpha > 0) {
+        if (headPending && alpha > 0 && flat) {
+            // Épuré (façon WhiteCat) : disque sombre, liseré blanc fin, chiffre discret.
+            b.circle(hx, hy, radius_, gfx::withAlpha(scaleRgb(color, 0.14f), alpha * 0.95f));
+            b.ring(hx, hy, radius_, radius_ * 0.09f, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha));
+            char num[8];
+            snprintf(num, sizeof(num), "%d", o.comboNumber);
+            ctx.fonts->semibold.draw(b, hx, hy - radius_ * 0.5f, radius_ * 0.9f, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha), num,
+                                     gfx::Align::Center);
+            if (!mods_.hidden && t < o.time) {
+                const float p = anim::clamp01(static_cast<float>((t - (o.time - preempt_)) / preempt_));
+                const float r = radius_ * (1.0f + 2.5f * (1.0f - p));
+                b.ring(hx, hy, r, std::max(2.0f, radius_ * 0.06f), gfx::withAlpha(scaleRgb(color, 1.6f), std::min(1.0f, alpha * 1.1f)));
+            }
+        } else if (headPending && alpha > 0) {
             // Style "triangles" de lazer : disque coloré, motif de triangles qui tourne, bord blanc.
             b.centered(ctx.tex->disc, hx, hy, radius_ * 2.0f, gfx::withAlpha(scaleRgb(color, 0.78f), alpha));
             b.rotated(ctx.tex->circleTriangles, hx, hy, radius_ * 1.86f, radius_ * 1.86f,
@@ -665,7 +721,12 @@ void Play::render(Context &ctx) {
             const int res = o.type == kCircle ? s.result : s.headResult;
             const double at = o.type == kCircle ? s.doneAt : s.headAt;
             const float k = static_cast<float>((now - at) / 0.24);
-            if (res > 0 && k < 1 && k >= 0) {
+            if (flat && res > 0 && k < 1 && k >= 0) {
+                // Épuré : le cercle grossit un peu et s'efface vite.
+                const float e = anim::outQuint(k);
+                b.ring(hx, hy, radius_ * (1 + 0.35f * e), radius_ * 0.09f, gfx::withAlpha(gfx::rgba(255, 255, 255), (1 - k) * 0.9f));
+                b.circle(hx, hy, radius_ * (1 + 0.35f * e) * 0.92f, gfx::withAlpha(scaleRgb(color, 0.5f), (1 - k) * 0.35f));
+            } else if (res > 0 && k < 1 && k >= 0) {
                 const float e = anim::outCubic(k);
                 b.setBlend(gfx::Blend::Additive);
                 b.centered(ctx.tex->glow, hx, hy, radius_ * 3.0f * (1 + e * 0.6f), gfx::withAlpha(color, (1 - k) * 0.6f));
@@ -690,6 +751,20 @@ void Play::render(Context &ctx) {
     for (const Popup &p : popups_) {
         const float k = static_cast<float>((now - p.time) / 0.6);
         if (k >= 1) continue;
+        if (flat) {
+            // Épuré : petits chiffres, croix rouge pour un raté.
+            const uint32_t c = p.result == 0 ? gfx::rgba(255, 70, 80) : (p.result == 100 ? gfx::rgba(120, 230, 120) : gfx::rgba(110, 180, 255));
+            const float a = 1 - k * k;
+            if (p.result == 0) {
+                const float r = radius_ * 0.35f * (1 + 0.3f * k);
+                b.line(p.x - r, p.y - r + k * 20, p.x + r, p.y + r + k * 20, radius_ * 0.12f, gfx::withAlpha(c, a));
+                b.line(p.x + r, p.y - r + k * 20, p.x - r, p.y + r + k * 20, radius_ * 0.12f, gfx::withAlpha(c, a));
+            } else {
+                ctx.fonts->semibold.draw(b, p.x, p.y - radius_ * 0.3f - k * 10, radius_ * 0.55f, gfx::withAlpha(c, a),
+                                         p.result == 100 ? "100" : "50", gfx::Align::Center);
+            }
+            continue;
+        }
         const char *text = p.result == 0 ? "Miss" : (p.result == 100 ? "Ok" : "Meh");
         const uint32_t c = p.result == 0 ? gfx::rgba(237, 17, 33) : (p.result == 100 ? gfx::rgba(179, 217, 68) : gfx::rgba(255, 204, 34));
         const float size = (p.result == 0 ? 52.0f : 40.0f) * (1 + 0.25f * anim::outBack(std::min(1.0f, k * 4)) - 0.25f);
@@ -702,6 +777,20 @@ void Play::render(Context &ctx) {
 
     // Curseur et traînée.
     trail_.emplace_front(cursorX_, cursorY_);
+    if (flat) {
+        // Traînée continue (segments arrondis qui s'amincissent), petit curseur blanc.
+        while (trail_.size() > 24) trail_.pop_back();
+        for (size_t k = trail_.size(); k-- > 1;) {
+            const float a = 1.0f - static_cast<float>(k) / static_cast<float>(trail_.size());
+            const auto &p0 = trail_[k], &p1 = trail_[k - 1];
+            const float w = 4 + 10 * a;
+            b.line(p0.first, p0.second, p1.first, p1.second, w, gfx::withAlpha(gfx::rgba(255, 255, 255), a * 0.45f));
+            b.circle(p1.first, p1.second, w * 0.5f, gfx::withAlpha(gfx::rgba(255, 255, 255), a * 0.45f));
+        }
+        b.circle(cursorX_, cursorY_, held_ ? 15.0f : 12.0f, gfx::rgba(0, 0, 0, 90), 3);
+        b.circle(cursorX_, cursorY_, held_ ? 12.0f : 10.0f, gfx::rgba(255, 255, 255));
+        b.ring(cursorX_, cursorY_, held_ ? 12.0f : 10.0f, 2.5f, gfx::rgba(255, 140, 190));
+    } else {
     while (trail_.size() > 14) trail_.pop_back();
     for (size_t k = trail_.size(); k-- > 1;) {
         const float a = 1.0f - static_cast<float>(k) / static_cast<float>(trail_.size());
@@ -709,6 +798,7 @@ void Play::render(Context &ctx) {
     }
     b.centered(ctx.tex->glow, cursorX_, cursorY_, 70, gfx::rgba(255, 150, 210, 160));
     b.centered(ctx.tex->disc, cursorX_, cursorY_, held_ ? 30.0f : 24.0f, gfx::rgba(255, 255, 255));
+    }
 
     if (failed_) {
         const float k = anim::clamp01(static_cast<float>((now - failTime_) / 1.0));

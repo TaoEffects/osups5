@@ -14,6 +14,8 @@
 
 #include <pthread.h>
 
+#include "audio/stretch.h"
+
 namespace audio {
 
 class Mixer;
@@ -38,6 +40,7 @@ public:
     bool load(const std::string &path);
     void unload();
     bool loaded() const { return decoder_ != nullptr; }
+    const std::string &path() const { return path_; }
 
     // Démarre (ou reprend) la lecture à `seconds` (peut être négatif : silence d'abord).
     void play(double seconds);
@@ -49,6 +52,10 @@ public:
         loop_.store(loop);
         loopStart_.store(loopStartSeconds);
     }
+    // Vitesse de lecture (1.5 = Double Time). preservePitch : tempo seul (DT/HT),
+    // sinon la hauteur suit (Nightcore). Prend effet tout de suite, sans saut audible.
+    void setRate(double rate, bool preservePitch);
+    double rate() const { return rate_.load(); }
     void setVolume(float v) { volume_.store(v); }
     float volume() const { return volume_.load(); }
     double lengthSeconds() const;
@@ -85,9 +92,14 @@ private:
     std::vector<float> history_ = std::vector<float>(1024, 0.0f);  // derniers échantillons mono
     size_t historyPos_ = 0;
     void analyse();
-    std::atomic<int64_t> playPos_{0};  // position courante (trames 48 kHz)
+    // Vitesse demandée, et vitesse réellement appliquée au contenu du tampon
+    // (changée par le thread de décodage lors d'un saut, sous mutex_).
+    std::atomic<double> rate_{1.0};
+    std::atomic<bool> preservePitch_{true};
+    double ringRate_ = 1.0;
+    std::atomic<double> playPos_{0};  // position courante dans le morceau (trames 48 kHz)
     // Instantané pour l'horloge : position au début du dernier bloc et trame mixeur.
-    std::atomic<int64_t> snapPos_{0};
+    std::atomic<double> snapPos_{0}, snapRate_{1.0};
     std::atomic<uint64_t> snapMixerFrame_{0};
     std::atomic<bool> snapValid_{false};
     pthread_t thread_{};

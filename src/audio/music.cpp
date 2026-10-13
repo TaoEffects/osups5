@@ -219,10 +219,26 @@ void Music::play(double seconds) {
         ringRead_ = 0;
         ringStartPos_ = target < 0 ? 0 : target;
     }
-    playPos_.store(target);
+    playPos_.store(static_cast<double>(target));
     snapValid_.store(false);
     ended_.store(false);
     playing_.store(true);
+}
+
+void Music::setRate(double rate, bool preservePitch) {
+    rate = std::clamp(rate, 0.25, 3.0);
+    if (rate == rate_.load() && preservePitch == preservePitch_.load()) return;
+    rate_.store(rate);
+    preservePitch_.store(preservePitch);
+    if (!decoder_) return;
+    // On repart de la position courante : le tampon décodé l'a été à l'ancienne vitesse.
+    std::lock_guard<std::mutex> lock(mutex_);
+    const int64_t at = static_cast<int64_t>(std::max(0.0, playPos_.load()));
+    pendingSeek_ = at;
+    ringCount_ = 0;
+    ringRead_ = 0;
+    ringStartPos_ = at;
+    snapValid_.store(false);
 }
 
 void Music::pause() {
@@ -235,24 +251,29 @@ void Music::resume() {
 }
 
 double Music::time(const Mixer &mixer) const {
-    if (!playing_.load() || !snapValid_.load()) return static_cast<double>(playPos_.load()) / kRate;
+    if (!playing_.load() || !snapValid_.load()) return playPos_.load() / kRate;
     const double sinceBlock = mixer.clockSeconds() - static_cast<double>(snapMixerFrame_.load()) / kRate;
-    return static_cast<double>(snapPos_.load()) / kRate + (sinceBlock > 0 ? sinceBlock : 0);
+    return snapPos_.load() / kRate + (sinceBlock > 0 ? sinceBlock * snapRate_.load() : 0);
 }
 
 void Music::render(float *out, int frames, uint64_t mixerFrame) {
     if (!playing_.load(std::memory_order_relaxed)) return;
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) return;  // le décodeur travaille : un bloc de silence, sans avancer
-    int64_t pos = playPos_.load(std::memory_order_relaxed);
+    double pos = playPos_.load(std::memory_order_relaxed);
+    // Avant que le décodeur ait traité un changement de vitesse, le silence de
+    // départ avance déjà à la nouvelle vitesse.
+    const double rate = pos < 0 ? rate_.load(std::memory_order_relaxed) : ringRate_;
     snapPos_.store(pos, std::memory_order_relaxed);
+    snapRate_.store(rate, std::memory_order_relaxed);
     snapMixerFrame_.store(mixerFrame, std::memory_order_relaxed);
     snapValid_.store(true, std::memory_order_release);
     const float vol = volume_.load(std::memory_order_relaxed);
     float energy = 0;
     for (int i = 0; i < frames; ++i) {
         if (pos < 0) {
-            ++pos;
+            pos += rate;
+            if (pos >= 0) pos = 0;
             continue;
         }
         if (pendingSeek_ != INT64_MIN || ringCount_ == 0) {
@@ -278,7 +299,7 @@ void Music::render(float *out, int frames, uint64_t mixerFrame) {
         historyPos_ = (historyPos_ + 1) % history_.size();
         ringRead_ = (ringRead_ + 1) % kRingFrames;
         --ringCount_;
-        ++pos;
+        pos += ringRate_;
     }
     playPos_.store(pos, std::memory_order_relaxed);
     const float rms = std::sqrt(energy / static_cast<float>(frames * 2));
@@ -330,14 +351,17 @@ void Music::decodeLoop() {
     double frac = 0;
     constexpr int kChunk = 1024;
     std::vector<float> chunk(kChunk * 2);
+    std::vector<float> stretched(kChunk * 4 * 2);
+    Stretcher stretcher;
+    double rate = 1.0;
+    bool stretch = false, finished = false;
     while (threadRun_.load()) {
         bool seekNow = false;
-        int64_t seekTarget = 0;
         size_t space = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (pendingSeek_ != INT64_MIN) {
-                seekTarget = pendingSeek_ < 0 ? 0 : pendingSeek_;
+                const int64_t seekTarget = pendingSeek_ < 0 ? 0 : pendingSeek_;
                 const uint64_t srcFrame =
                     static_cast<uint64_t>(static_cast<double>(seekTarget) * decoder_->rate / kRate);
                 decoder_->seek(srcFrame);
@@ -346,6 +370,9 @@ void Music::decodeLoop() {
                 ringStartPos_ = seekTarget;
                 decoderEof_ = false;
                 pendingSeek_ = INT64_MIN;
+                rate = rate_.load();
+                stretch = preservePitch_.load() && std::fabs(rate - 1.0) > 1e-6;
+                ringRate_ = rate;
                 seekNow = true;
             }
             space = kRingFrames - ringCount_;
@@ -353,16 +380,19 @@ void Music::decodeLoop() {
         if (seekNow) {
             srcCount = srcIdx = 0;
             frac = 0;
+            finished = false;
+            stretcher.reset(rate);
         }
-        if (space < kChunk || decoderEof_) {
+        if (space < kChunk * 3 || decoderEof_) {
             usleep(3000);
             continue;
         }
-        // Production d'un bloc rééchantillonné (interpolation linéaire).
-        const double step = static_cast<double>(decoder_->rate) / kRate;
+        // Rééchantillonnage vers 48 kHz (interpolation linéaire). Sans tempo
+        // séparé (Nightcore), la vitesse s'applique directement ici.
+        const double step = static_cast<double>(decoder_->rate) / kRate * (stretch ? 1.0 : rate);
         int produced = 0;
         bool eof = false;
-        while (produced < kChunk) {
+        while (produced < kChunk && !finished) {
             if (srcIdx + 1 >= srcCount) {
                 // Garde la dernière trame comme point de départ de l'interpolation.
                 if (srcCount > 0) {
@@ -389,12 +419,25 @@ void Music::decodeLoop() {
             srcIdx += whole;
             frac -= whole;
         }
+        const float *out = chunk.data();
+        int outFrames = produced;
+        if (stretch) {
+            stretcher.push(chunk.data(), produced);
+            if (eof && !finished) {
+                stretcher.finish();
+                finished = true;
+            }
+            outFrames = stretcher.pull(stretched.data(), static_cast<int>(std::min(stretched.size() / 2, space)));
+            out = stretched.data();
+            // Il reste parfois de la sortie à vider après la fin du décodeur.
+            if (eof || finished) eof = stretcher.available() == 0;
+        }
         std::lock_guard<std::mutex> lock(mutex_);
         if (pendingSeek_ != INT64_MIN) continue;  // un saut est arrivé entre-temps : bloc périmé
-        for (int i = 0; i < produced; ++i) {
+        for (int i = 0; i < outFrames; ++i) {
             const size_t w = (ringRead_ + ringCount_) % kRingFrames;
-            ring_[w * 2] = chunk[i * 2];
-            ring_[w * 2 + 1] = chunk[i * 2 + 1];
+            ring_[w * 2] = out[i * 2];
+            ring_[w * 2 + 1] = out[i * 2 + 1];
             ++ringCount_;
         }
         if (eof) decoderEof_ = true;

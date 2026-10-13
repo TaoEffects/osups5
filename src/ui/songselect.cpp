@@ -1,175 +1,278 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Sélection de map façon lazer : encart incliné avec l'image de la map en haut à
-// gauche, carrousel de cartes illustrées à droite, recherche, pied de page coloré.
+// Sélection de map, sur le modèle de la nouvelle SongSelect de lazer :
+//  - à gauche, encart incliné (titre, artiste, statistiques, difficulté) puis le
+//    classement local ;
+//  - à droite, le carrousel : cartes de sets (72 u) et de difficultés (45 u),
+//    décalées selon une courbe circulaire, positions amorties (50 ms) ;
+//  - en haut à droite, la recherche ; en bas, le pied de page (retour rose,
+//    Mods, Au hasard, Options) et le logo qui sert de bouton « Jouer ».
+// Valeurs (tailles, durées, courbes) reprises du code de lazer, en unités u.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "app/game.h"
-#include "core/anim.h"
 #include "core/fsutil.h"
 #include "game/library.h"
-#include "ui/theme.h"
+#include "ui/lz.h"
 
 namespace {
 
-constexpr float kSetH = 128, kDiffH = 84, kGap = 10;
-constexpr float kListX = 1000;
+using namespace lz;
+
+constexpr float kSetH = 72 * U, kDiffH = 45 * U;
+constexpr float kColW = kVW / 2;                  // colonnes gauche et droite : 50 % chacune
+constexpr float kFilterBottom = 131 * U;          // bas de la zone de recherche
+constexpr float kHalfH = kVH / 2;
+
+const Palette &pal() {
+    static const Palette p = palette(hue::blue);
+    return p;
+}
+
+struct Item {
+    int set = -1, diff = -1;  // diff = -1 : carte de set
+    float y = 0, h = 0;       // position cible dans la liste
+};
+
+struct PanelAnim {
+    float drawY = 0;
+    bool placed = false;
+    Tween x{0}, alpha{0}, chevron{0}, selection{0}, flash{0}, hover{0};
+    bool hovered = false;
+    int lastState = -1;
+    long lastBeat = -1;
+    Tween pulse{0};
+};
+
+// Mods proposés, rangés par colonne comme lazer.
+struct ModDef {
+    const char *acronym, *name, *desc;
+    int type;  // 0 réduction, 1 augmentation, 2 automatisation
+    bool game::Mods::*flag;
+};
+const ModDef kMods[] = {
+    {"EZ", "Easy", "Plus gros, plus lents, plus tolérants.", 0, &game::Mods::easy},
+    {"NF", "No Fail", "Impossible d'échouer.", 0, &game::Mods::noFail},
+    {"HT", "Half Time", "Musique ralentie (×0,75).", 0, &game::Mods::halfTime},
+    {"HR", "Hard Rock", "Plus petits, plus rapides, plus stricts.", 1, &game::Mods::hardRock},
+    {"DT", "Double Time", "Musique accélérée (×1,5), même hauteur.", 1, &game::Mods::doubleTime},
+    {"NC", "Nightcore", "Comme DT, mais la musique monte.", 1, &game::Mods::nightcore},
+    {"HD", "Hidden", "Les cercles s'effacent avant la frappe.", 1, &game::Mods::hidden},
+    {"AT", "Auto", "Regarder la map se jouer toute seule.", 2, &game::Mods::autoplay},
+};
+constexpr int kModCount = sizeof(kMods) / sizeof(kMods[0]);
+const char *const kModColumns[] = {"Réduction de difficulté", "Augmentation de difficulté", "Automatisation"};
 
 class SongSelect : public Screen {
 public:
     using Screen::Screen;
 
     void enter() override {
-        enterTime_ = game.ctx.now;
+        Context &c = game.ctx;
+        const double t = ms(c);
         set_ = std::max(0, game.selectedSet);
         diff_ = std::max(0, game.selectedDiff);
         filter();
+        rebuild();
         scroll_ = targetScroll();
-        wedgeTime_ = game.ctx.now;
+        // Arrivée : encarts depuis la gauche (-150), recherche depuis la droite, fondu.
+        const double d = forward ? 0 : 0;
+        wedgeX_.fromTo(t, -150 * U, 0, 600, Ease::OutQuint, d);
+        wedgeA_.fromTo(t, 0, 1, 200, Ease::In, d);
+        screenA_.fromTo(t, forward ? 1 : 0, 1, 300, Ease::OutQuint);
+        focus_.snap(0);
+        footerY_.fromTo(t, 75 * U, 0, 500, Ease::OutQuint);
+        for (int i = 0; i < 4; ++i) footerBtnY_[i].fromTo(t, 100 * U, 0, 240, Ease::OutCubic, i * 30.0);
+        // Le logo rejoint le coin bas droit (échelle 0,2 -> 0,4), après sa sortie du menu.
+        logoAt_ = t + (forward ? 300 : 0);
+        logoPending_ = true;
+        game.toolbar.show(c, true);
+        game.setBackground(0.1f, 0, 250, Ease::None);
+        game.backgroundParallax = 1;
         if (game.currentSet()) game.select(set_, diff_, true);
+        appearAt_ = t;
+    }
+
+    double leave() override {
+        Context &c = game.ctx;
+        const double t = ms(c);
+        screenA_.go(t, 0, 300, Ease::OutQuint);
+        if (forward) {
+            // Vers la partie : les autres cartes s'écartent, les encarts partent.
+            focus_.go(t, 1, 300, Ease::OutQuint);
+            wedgeX_.go(t, -150 * U, 600, Ease::OutQuint);
+            wedgeA_.go(t, 0, 200, Ease::In);
+        } else {
+            game.logo.scale.go(t, 0.2f, 120, Ease::Out);
+            game.logo.opacity.go(t, 0, 120, Ease::Out);
+        }
+        footerY_.go(t, 75 * U, 500, Ease::OutQuint);
+        return 600;
     }
 
     void update(const UiInput &in) override {
         Context &c = game.ctx;
+        const double t = ms(c);
+        if (logoPending_ && t >= logoAt_) {
+            logoPending_ = false;
+            Logo &logo = game.logo;
+            logo.x.snap(logoX());
+            logo.y.snap(logoY());
+            logo.scale.fromTo(t, 0.2f, 0.4f, 240, Ease::OutQuint);
+            logo.opacity.go(t, 1, 240, Ease::OutQuint);
+            logo.interactive = true;
+            logo.visualiser = false;
+        }
         const auto &sets = c.library->sets();
-        if (lastCount_ != sets.size()) filter();  // la bibliothèque a changé (scan, téléchargement)
+        if (lastCount_ != sets.size()) {
+            filter();
+            rebuild();
+        }
         typing(in);
-
         if (modsOpen_) {
             updateMods(in);
             return;
+        }
+        // Pied de page et bouton retour (souris).
+        const float fy = footerTop();
+        backFx_.setHover(c, in.hover(12 * U, kVH - 12 * U - kBackH, kBackW, kBackH));
+        backFx_.setPressed(c, backFx_.hovered && in.raw && (in.raw->mouse.buttons & 1u));
+        if (backFx_.hovered && in.mouseClick) {
+            backFx_.trigger(c);
+            goBack();
+            return;
+        }
+        for (int i = 0; i < 3; ++i) {
+            const float bx = footerBtnX(i);
+            const bool h = in.hover(bx - kShear * kFooterBtnH * 0.5f, fy, kFooterBtnW, kFooterBtnH);
+            footerFx_[i].setHover(c, h);
+            if (h && in.mouseClick) footerAction(i);
         }
         if (in.back) {
             if (!query_.empty()) {
                 query_.clear();
                 filter();
+                rebuild();
                 return;
             }
-            c.play(c.sfx->uiBack);
-            game.goTo(game.makeMainMenu());
+            goBack();
             return;
-        }
-        // Pied de page (souris).
-        std::vector<float> widths;
-        const std::vector<float> xs = footer(widths);
-        for (size_t i = 0; i < xs.size(); ++i) {
-            footerHover_[i] = in.hover(xs[i], kVH - ui::kFooterH, widths[i], ui::kFooterH);
-            if (in.clicked(xs[i], kVH - ui::kFooterH, widths[i], ui::kFooterH)) footerAction(static_cast<int>(i));
         }
         if (visible_.empty()) {
-            if (in.confirm && sets.empty()) {
+            if (in.confirm || game.logo.clicked()) {
                 c.play(c.sfx->uiSelect);
-                game.goTo(game.makeDownload());
+                game.openOverlay(game.makeDownload());
             }
             return;
         }
-        if (in.extra2) footerAction(1);
-        if (in.options) footerAction(3);
+        if (in.extra2) footerAction(0);
+        if (in.extra) footerAction(1);
+        if (in.options) footerAction(2);
 
         const int oldSet = set_, oldDiff = diff_;
-        int pos = visibleIndex();
-        const int nDiffs = static_cast<int>(sets[static_cast<size_t>(set_)].diffs.size());
+        const int pos = itemIndex(set_, diff_);
+        const int n = static_cast<int>(items_.size());
         if (in.down || in.wheel < 0) {
-            if (diff_ + 1 < nDiffs && !(in.wheel < 0)) {
-                ++diff_;
-            } else if (pos + 1 < static_cast<int>(visible_.size())) {
-                set_ = visible_[static_cast<size_t>(pos + 1)];
-                diff_ = 0;
+            // Élément visible suivant ; une carte de set sélectionne sa difficulté.
+            int k = pos;
+            const int steps = in.wheel < 0 ? static_cast<int>(std::ceil(-in.wheel)) : 1;
+            for (int s = 0; s < steps; ++s) {
+                k = (k + 1) % n;
+                if (items_[static_cast<size_t>(k)].diff < 0) {
+                    // Saute la carte de set : sélectionne sa première difficulté.
+                    pick(items_[static_cast<size_t>(k)].set, 0);
+                    break;
+                }
+                pick(items_[static_cast<size_t>(k)].set, items_[static_cast<size_t>(k)].diff);
             }
-        }
-        if (in.up || in.wheel > 0) {
-            if (diff_ > 0 && !(in.wheel > 0)) {
-                --diff_;
-            } else if (pos > 0) {
-                set_ = visible_[static_cast<size_t>(pos - 1)];
-                diff_ = in.wheel > 0 ? 0 : static_cast<int>(sets[static_cast<size_t>(set_)].diffs.size()) - 1;
-            }
-        }
-        pos = visibleIndex();
-        if (in.right || in.r1) {
-            set_ = visible_[static_cast<size_t>(std::min(static_cast<int>(visible_.size()) - 1, pos + (in.r1 ? 10 : 1)))];
-            diff_ = 0;
-        }
-        if (in.left || in.l1) {
-            set_ = visible_[static_cast<size_t>(std::max(0, pos - (in.l1 ? 10 : 1)))];
-            diff_ = 0;
-        }
-        if (in.extra) footerAction(2);
-
-        // Clics dans le carrousel.
-        bool playClicked = false;
-        for (const Hit &h : hits_) {
-            if (!in.clicked(h.x, h.y, h.w, h.h)) continue;
-            if (h.set == set_ && h.diff == diff_ && h.diff >= 0) {
-                playClicked = true;
+        } else if (in.up || in.wheel > 0) {
+            const int pv = visibleIndex();
+            if (diff_ > 0) {
+                pick(set_, diff_ - 1);
             } else {
-                set_ = h.set;
-                diff_ = h.diff >= 0 ? h.diff : 0;
+                const int prev = (pv - 1 + static_cast<int>(visible_.size())) % static_cast<int>(visible_.size());
+                const int s = visible_[static_cast<size_t>(prev)];
+                pick(s, static_cast<int>(sets[static_cast<size_t>(s)].diffs.size()) - 1);
             }
-            break;
+        }
+        const int pv = visibleIndex();
+        const int nv = static_cast<int>(visible_.size());
+        if (in.right) pick(visible_[static_cast<size_t>((pv + 1) % nv)], 0);
+        if (in.left) pick(visible_[static_cast<size_t>((pv - 1 + nv) % nv)], 0);
+        if (in.r1) pick(visible_[static_cast<size_t>(std::min(nv - 1, pv + 8))], 0);
+        if (in.l1) pick(visible_[static_cast<size_t>(std::max(0, pv - 8))], 0);
+        if (in.r2) pick(visible_.back(), 0);
+        if (in.l2) pick(visible_.front(), 0);
+
+        // Souris dans le carrousel.
+        bool playClicked = false;
+        for (size_t i = 0; i < items_.size(); ++i) {
+            const Item &it = items_[i];
+            PanelAnim &pa = anim(it);
+            const float x = panelX(it, pa), y = pa.drawY - scroll_ + kHalfH;
+            const bool h = in.mouseActive && in.mouseX >= x && in.mouseY >= y && in.mouseY < y + it.h && in.mouseY > kFilterBottom &&
+                           in.mouseY < fy;
+            if (h != pa.hovered) {
+                pa.hovered = h;
+                pa.hover.go(t, h ? 1 : 0, h ? 100 : 1000, Ease::OutQuint);
+            }
+            if (h && in.mouseClick) {
+                if (it.diff >= 0 && it.set == set_ && it.diff == diff_) playClicked = true;
+                else pick(it.set, std::max(0, it.diff));
+            }
         }
         if (set_ != oldSet || diff_ != oldDiff) {
             c.play(c.sfx->uiHover, 0.7f);
-            changeTime_ = c.now;
+            changeTime_ = t;
             pending_ = true;
-            if (set_ != oldSet) wedgeTime_ = c.now;
+            if (set_ != oldSet) rebuild();
+            anim(Item{set_, diff_}).flash.fromTo(t, 0.4f, 0, 1000, Ease::OutQuint);
         }
-        if (pending_ && c.now - changeTime_ > 0.15) {
+        // Le changement global (fond, musique) attend 150 ms (300 si une touche reste enfoncée).
+        const bool held = in.raw && ((in.raw->pad.buttons & (plat::kPadUp | plat::kPadDown)) != 0);
+        if (pending_ && t - changeTime_ > (held ? 300 : 150)) {
             pending_ = false;
             game.select(set_, diff_, true);
         }
-        if (in.confirm || playClicked) footerAction(4);
-        scroll_ = anim::approach(scroll_, targetScroll(), c.dt, 0.05f);
+        if (in.confirm || playClicked || game.logo.clicked()) play();
+        scroll_ = anim::damp(scroll_, targetScroll(), 60, c.dt * 1000);
+        for (Item &it : items_) {
+            PanelAnim &pa = anim(it);
+            pa.drawY = pa.placed ? anim::damp(pa.drawY, it.y, 50, c.dt * 1000) : it.y;
+            pa.placed = true;
+        }
     }
 
     void render() override {
         Context &c = game.ctx;
         gfx::SpriteBatch &b = *c.batch;
-        hits_.clear();
-        game.drawMenuBackground(0.5f);
-        const float in = anim::outQuint(static_cast<float>((c.now - enterTime_) / 0.6));
-        const auto &sets = c.library->sets();
-
-        renderSearch(in);
-        if (visible_.empty()) {
-            const char *msg = c.library->scanning() ? "Lecture de la bibliothèque…"
-                              : sets.empty()        ? "Aucune map installée"
-                                                    : "Aucune map ne correspond à la recherche";
-            c.fonts->bold.drawShadow(b, kVW / 2, kVH / 2 - 80, 52, ui::color::text, msg, gfx::Align::Center);
-            if (sets.empty() && !c.library->scanning())
-                c.fonts->semibold.drawShadow(b, kVW / 2, kVH / 2, 30, ui::color::textDim,
-                                             "Croix : télécharger des maps directement depuis l'appli", gfx::Align::Center);
-            renderFooter();
-            return;
+        const double t = ms(c);
+        const float sa = screenA_.at(t);
+        if (sa <= 0.001f) return;
+        b.pushAlpha(sa);
+        // Dégradés noirs : à gauche (0,3 -> 0) et derrière le carrousel (0 -> 0,5).
+        b.roundRectGradient(0, 0, kVW * 0.6f, kVH, 0, gfx::Corners::horizontal(alpha(col::black, 0.3f), alpha(col::black, 0)));
+        b.roundRectGradient(kColW, 0, kColW, kVH, 0, gfx::Corners::horizontal(alpha(col::black, 0), alpha(col::black, 0.5f)));
+        renderCarousel();
+        renderFilter();
+        if (!visible_.empty()) {
+            renderTitleWedge();
+            renderLeaderboard();
+        } else {
+            renderEmpty();
         }
-
-        // --- Carrousel ------------------------------------------------------------------
-        float y = kVH * 0.45f - scroll_;
-        for (int vi = 0; vi < static_cast<int>(visible_.size()); ++vi) {
-            const int s = visible_[static_cast<size_t>(vi)];
-            const game::SetInfo &set = sets[static_cast<size_t>(s)];
-            const bool open = s == set_;
-            const float h = open ? kSetH + static_cast<float>(set.diffs.size()) * (kDiffH + 8) + 8 : kSetH;
-            if (y + h > 60 && y < kVH - 40) renderSet(s, set, open, y, in);
-            y += h + kGap;
-        }
-
-        renderWedge(in);
-        renderScores(in);
         renderFooter();
-        if (modsOpen_) renderMods();
+        b.popTransform();
+        if (modsOpen_ || modsA_.at(t) > 0.001f) renderMods();
     }
 
 private:
-    struct Hit {
-        float x, y, w, h;
-        int set, diff;
-    };
-
     // --- Données -------------------------------------------------------------------------
 
     void filter() {
@@ -190,19 +293,710 @@ private:
             set_ = visible_[0];
             diff_ = 0;
             pending_ = true;
-            changeTime_ = game.ctx.now;
+            changeTime_ = ms(game.ctx);
         }
         if (!sets.empty() && set_ < static_cast<int>(sets.size()))
             diff_ = std::clamp(diff_, 0, static_cast<int>(sets[static_cast<size_t>(set_)].diffs.size()) - 1);
     }
 
+    // Liste à plat : cartes de sets, et difficultés du set ouvert ; espacements de lazer.
+    void rebuild() {
+        const auto &sets = game.ctx.library->sets();
+        items_.clear();
+        float y = 0;
+        int prevKind = -1;  // 0 set fermé, 1 set ouvert, 2 difficulté
+        for (int s : visible_) {
+            const bool open = s == set_;
+            const int kind = open ? 1 : 0;
+            if (prevKind >= 0) y += gapBetween(prevKind, kind);
+            items_.push_back({s, -1, y, kSetH});
+            y += kSetH;
+            prevKind = kind;
+            if (!open) continue;
+            const auto &diffs = sets[static_cast<size_t>(s)].diffs;
+            for (int d = 0; d < static_cast<int>(diffs.size()); ++d) {
+                y += gapBetween(prevKind, 2);
+                items_.push_back({s, d, y, kDiffH});
+                y += kDiffH;
+                prevKind = 2;
+            }
+        }
+        // Une carte qui apparaît part de la position de celle du dessus.
+        for (size_t i = 0; i < items_.size(); ++i) {
+            PanelAnim &pa = anim(items_[i]);
+            if (!pa.placed && i > 0) {
+                pa.drawY = anim(items_[i - 1]).drawY;
+                pa.placed = true;
+            }
+        }
+    }
+
+    static float gapBetween(int a, int b) {
+        if (a == 0 && b == 0) return 0;          // sets fermés : collés
+        if (b == 1 || a == 1) return 6 * U + 3 * U;
+        if (a == 2 && b == 2) return 3 * U;
+        return 9 * U;                            // difficulté -> set suivant
+    }
+
+    int itemIndex(int s, int d) const {
+        for (size_t i = 0; i < items_.size(); ++i)
+            if (items_[i].set == s && items_[i].diff == d) return static_cast<int>(i);
+        return 0;
+    }
     int visibleIndex() const {
         auto it = std::find(visible_.begin(), visible_.end(), set_);
         return it == visible_.end() ? 0 : static_cast<int>(it - visible_.begin());
     }
-
     float targetScroll() const {
-        return static_cast<float>(visibleIndex()) * (kSetH + kGap) + kSetH + static_cast<float>(diff_) * (kDiffH + 8) - kDiffH;
+        if (items_.empty()) return 0;
+        const Item &it = items_[static_cast<size_t>(itemIndex(set_, diff_))];
+        return it.y + it.h / 2;
+    }
+    void pick(int s, int d) {
+        set_ = s;
+        diff_ = d;
+    }
+    PanelAnim &anim(const Item &it) { return anims_[static_cast<uint64_t>(it.set) << 16 | static_cast<uint16_t>(it.diff + 1)]; }
+
+    float panelX(const Item &it, PanelAnim &pa) {
+        const double t = ms(game.ctx);
+        const bool selected = it.diff < 0 ? it.set == set_ : (it.set == set_ && it.diff == diff_);
+        const bool kbd = it.set == set_ && it.diff == diff_;
+        float off;
+        if (it.diff < 0)
+            off = 20 * U + 10 * U + (selected ? 0 : 100 * U) + (kbd ? 0 : 25 * U);
+        else
+            off = 60 * U + 10 * U + (selected ? 0 : 50 * U) + (kbd ? 0 : 25 * U);
+        const int state = static_cast<int>(off);
+        if (state != pa.lastState) {
+            if (pa.lastState < 0) pa.x.snap(off);
+            else pa.x.go(t, off, 400, Ease::OutQuint);
+            pa.lastState = state;
+        }
+        // Courbe circulaire : les cartes s'écartent vers les bords haut et bas.
+        const float cy = pa.drawY - scroll_ + kHalfH + it.h / 2;
+        const float d = std::fabs(1 - cy / kHalfH);
+        const float curve = (3 - std::sqrt(std::max(0.0f, 9 - d * d))) * kHalfH;
+        // Pendant le départ vers la partie, les autres cartes glissent de 300 px.
+        const float focus = selected || it.set == set_ ? 0 : 300 * focus_.at(t);
+        return kColW + pa.x.at(t) + curve + focus;
+    }
+
+    // --- Actions -------------------------------------------------------------------------
+
+    void goBack() {
+        Context &c = game.ctx;
+        c.play(c.sfx->uiBack);
+        game.goTo(game.makeMainMenu(), false);
+    }
+
+    void footerAction(int i) {
+        Context &c = game.ctx;
+        footerFx_[i].trigger(c);
+        switch (i) {
+        case 0:
+            modsOpen_ = true;
+            modsA_.go(ms(c), 1, 400, Ease::OutQuint);
+            for (int k = 0; k < 3; ++k) modColY_[k].fromTo(ms(c), 120 * U, 0, 500, Ease::OutQuint, k * 30.0);
+            c.play(c.sfx->uiOpen, 0.7f);
+            break;
+        case 1:
+            if (!visible_.empty()) {
+                pick(visible_[static_cast<size_t>(rand() % static_cast<int>(visible_.size()))], 0);
+                c.play(c.sfx->uiOpen, 0.6f);
+            }
+            break;
+        default: game.openOverlay(game.makeOptions()); break;
+        }
+    }
+
+    void play() {
+        Context &c = game.ctx;
+        const auto &sets = c.library->sets();
+        if (visible_.empty() || set_ >= static_cast<int>(sets.size())) return;
+        game.select(set_, diff_, false);
+        c.play(c.sfx->uiSelect);
+        c.saveSettings();
+        game.goTo(game.makePlayerLoader());
+    }
+
+    // --- Mods ----------------------------------------------------------------------------
+
+    void updateMods(const UiInput &in) {
+        Context &c = game.ctx;
+        const double t = ms(c);
+        auto close = [&]() {
+            modsOpen_ = false;
+            modsA_.go(t, 0, 300, Ease::OutQuint);
+            for (int k = 0; k < 3; ++k) modColY_[k].go(t, 60 * U, 300, Ease::OutQuint);
+            c.play(c.sfx->uiBack);
+        };
+        if (in.back || in.extra2) {
+            close();
+            return;
+        }
+        // Grille : colonne = type, ligne = rang dans la colonne.
+        int col = kMods[modCursor_].type, row = 0;
+        for (int i = 0; i < modCursor_; ++i)
+            if (kMods[i].type == col) ++row;
+        auto at = [&](int cc, int rr) {
+            int k = 0;
+            for (int i = 0; i < kModCount; ++i)
+                if (kMods[i].type == cc) {
+                    if (k == rr) return i;
+                    ++k;
+                }
+            for (int i = kModCount - 1; i >= 0; --i)
+                if (kMods[i].type == cc) return i;
+            return 0;
+        };
+        const int old = modCursor_;
+        if (in.left && col > 0) modCursor_ = at(col - 1, row);
+        if (in.right && col < 2) modCursor_ = at(col + 1, row);
+        if (in.up) modCursor_ = at(col, std::max(0, row - 1));
+        if (in.down) modCursor_ = at(col, row + 1);
+        if (old != modCursor_) c.play(c.sfx->uiHover, 0.7f);
+        bool toggle = in.confirm ? true : false;
+        for (int i = 0; i < kModCount; ++i) {
+            float x, y;
+            modRect(i, x, y);
+            if (in.hover(x, y, modW(), 42 * U)) {
+                if (in.mouseMoved) modCursor_ = i;
+                if (in.mouseClick) {
+                    modCursor_ = i;
+                    toggle = true;
+                }
+            }
+        }
+        if (in.mouseClick && in.mouseY < modsTop() - 20 * U) {
+            close();
+            return;
+        }
+        if (toggle) {
+            game::Mods &m = game.mods;
+            const ModDef &d = kMods[modCursor_];
+            m.*(d.flag) = !(m.*(d.flag));
+            // Mods incompatibles entre eux.
+            if (m.*(d.flag)) {
+                const std::string a = d.acronym;
+                if (a == "EZ") m.hardRock = false;
+                if (a == "HR") m.easy = false;
+                if (a == "DT") m.nightcore = m.halfTime = false;
+                if (a == "NC") m.doubleTime = m.halfTime = false;
+                if (a == "HT") m.doubleTime = m.nightcore = false;
+                if (a == "AT") m.noFail = false;
+                if (a == "NF") m.autoplay = false;
+            }
+            modFlash_[modCursor_].fromTo(t, 0.5f, 0, 600, Ease::OutQuint);
+            c.play(m.*(d.flag) ? c.sfx->uiSelect : c.sfx->uiBack, 0.8f);
+            // Aperçu au bon tempo, comme lazer.
+            c.music->setRate(m.rate(), !m.nightcore);
+        }
+    }
+
+    float modsTop() const { return kVH * 0.42f; }
+    float modW() const { return 300 * U; }
+    void modRect(int i, float &x, float &y) const {
+        const int col = kMods[i].type;
+        int row = 0;
+        for (int k = 0; k < i; ++k)
+            if (kMods[k].type == col) ++row;
+        const float total = 3 * (modW() + 30 * U) - 30 * U;
+        x = kVW / 2 - total / 2 + static_cast<float>(col) * (modW() + 30 * U) + 15 * U;
+        y = modsTop() + 60 * U + static_cast<float>(row) * (42 * U + 7 * U) + modColY_[col].at(ms(game.ctx));
+    }
+
+    void renderMods() {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        const float a = modsA_.at(t);
+        b.pushAlpha(a);
+        b.rect(0, 0, kVW, kVH, alpha(col::black, 0.5f));
+        const float top = modsTop() - 100 * U;
+        b.roundRectGradient(0, top, kVW, kVH - top, 0, gfx::Corners::vertical(alpha(pal().background6, 0), alpha(pal().background6, 0.95f)));
+        // En-tête.
+        c.fonts->light.draw(b, kVW / 2 - 3 * (modW() + 30 * U) / 2 + 15 * U, top + 10 * U, 30 * U, col::white, "mods");
+        char line[96];
+        snprintf(line, sizeof(line), "Multiplicateur de score : ×%.2f", game.mods.scoreMultiplier());
+        const float mult = game.mods.scoreMultiplier();
+        c.fonts->semibold.draw(b, kVW / 2 + 3 * (modW() + 30 * U) / 2 - 15 * U, top + 22 * U, 18 * U,
+                               mult > 1.001f ? col::red1 : mult < 0.999f ? col::lime1 : col::white, line, gfx::Align::Right);
+        c.fonts->regular.draw(b, kVW / 2 - 3 * (modW() + 30 * U) / 2 + 15 * U, top + 48 * U, 15 * U, pal().content2,
+                              "Les mods changent la façon de jouer. Certains changent aussi le score.");
+        // Colonnes.
+        for (int col = 0; col < 3; ++col) {
+            float x, y;
+            int first = 0;
+            int count = 0;
+            for (int i = 0; i < kModCount; ++i)
+                if (kMods[i].type == col) {
+                    if (!count) first = i;
+                    ++count;
+                }
+            modRect(first, x, y);
+            const float ch = 60 * U + static_cast<float>(count) * 49 * U + 10 * U;
+            const float cy = y - 50 * U;
+            b.roundRect(x - 10 * U, cy, modW() + 20 * U, ch, 10 * U, pal().background5, kShear);
+            b.roundRect(x - 10 * U, cy, modW() + 20 * U, 4 * U, 2 * U, modTypeColor(col), kShear);
+            c.fonts->semibold.draw(b, x + 6 * U, cy + 14 * U, 17 * U, col::white, kModColumns[col]);
+        }
+        for (int i = 0; i < kModCount; ++i) {
+            float x, y;
+            modRect(i, x, y);
+            const ModDef &d = kMods[i];
+            const bool on = game.mods.*(d.flag);
+            const bool sel = i == modCursor_;
+            const uint32_t accent = modTypeColor(d.type);
+            const float h = 42 * U;
+            // Panneau incliné : la partie gauche (interrupteur) prend la couleur du type si actif.
+            b.shadow(x, y + 2 * U, modW(), h, 7 * U, 4 * U, alpha(col::black, 0.25f), kShear);
+            b.roundRect(x, y, modW(), h, 7 * U, on ? accent : (sel ? pal().background2 : pal().background3), kShear);
+            b.roundRect(x + 30 * U, y, modW() - 30 * U, h, 7 * U, on ? darken(accent, 0.7f) : (sel ? pal().background3 : pal().background4), kShear);
+            const float fl = modFlash_[i].at(t);
+            if (fl > 0) b.roundRect(x, y, modW(), h, 7 * U, alpha(col::white, fl * 0.3f), kShear);
+            if (sel && !game.input().mouseActive) b.roundRectBorder(x - 2, y - 2, modW() + 4, h + 4, 8 * U, 2.5f, col::white, kShear);
+            modIcon(c, d.acronym, x + 58 * U, y + h / 2, 22 * U, on ? col::white : accent);
+            c.fonts->semibold.draw(b, x + 88 * U, y + 5 * U, 17 * U, col::white, d.name);
+            text(c, c.fonts->regular, x + 88 * U - 3 * U, y + 24 * U, 12 * U, on ? alpha(col::white, 0.85f) : pal().content2, d.desc,
+                 gfx::Align::Left, modW() - 96 * U);
+        }
+        b.popTransform();
+    }
+
+    // --- Rendu ---------------------------------------------------------------------------
+
+    void renderCarousel() {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        // Ordre de dessin : les plus éloignées de la sélection d'abord.
+        std::vector<size_t> order(items_.size());
+        for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+        const float selY = items_.empty() ? 0 : items_[static_cast<size_t>(itemIndex(set_, diff_))].y;
+        std::sort(order.begin(), order.end(), [&](size_t a, size_t bb) {
+            const float da = (items_[a].diff < 0 ? 2.0f : 1.0f) * 1e6f - std::fabs(items_[a].y - selY);
+            const float db = (items_[bb].diff < 0 ? 2.0f : 1.0f) * 1e6f - std::fabs(items_[bb].y - selY);
+            return da > db;
+        });
+        for (size_t idx : order) {
+            const Item &it = items_[idx];
+            PanelAnim &pa = anim(it);
+            const float y = pa.drawY - scroll_ + kHalfH;
+            if (y > kVH || y + it.h < 0) continue;
+            const float x = panelX(it, pa);
+            const float ap = anim::ease(Ease::OutQuint, static_cast<float>(std::clamp((t - appearAt_) / 400.0, 0.0, 1.0)));
+            b.pushAlpha(ap);
+            if (it.diff < 0)
+                renderSetPanel(it, pa, x, y);
+            else
+                renderDiffPanel(it, pa, x, y);
+            b.popTransform();
+        }
+    }
+
+    void panelChrome(PanelAnim &pa, float x, float y, float w, float h, bool selected, uint32_t accent) {
+        gfx::SpriteBatch &b = *game.ctx.batch;
+        const float r = 10 * U;
+        if (selected) {
+            // Lueur creuse autour de la carte (couleur d'accent).
+            b.shadow(x - 1, y - 1, w + 2, h + 2, r, 3 * U, alpha(accent, 0.8f));
+        } else {
+            b.shadow(x, y + U, w, h, r, 4 * U, alpha(col::black, 0.2f));
+        }
+        (void)pa;
+    }
+
+    void panelOverlays(PanelAnim &pa, float x, float y, float w, float h, bool selected, uint32_t accent) {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        const float r = 10 * U;
+        b.setBlend(gfx::Blend::Additive);
+        const float hv = pa.hover.at(t);
+        if (hv > 0) b.roundRect(x, y, w, h, r, alpha(col::blue1, 0.1f * hv));
+        if (selected) {
+            // Calque de sélection : dégradé sur les 80 % de droite, pulsé au rythme.
+            if (c.trackRunning && c.beatIndexEarly != pa.lastBeat) {
+                pa.lastBeat = c.beatIndexEarly;
+                double bl = c.beatLength;
+                while (bl < 250) bl *= 2;
+                pa.pulse.fromTo(t, 0.4f, 0.8f, 40, Ease::Out);
+                pa.pulse.go(t, 0.4f, bl, Ease::Out, 40);
+            }
+            const float p = c.trackRunning ? pa.pulse.at(t) : 0.5f;
+            b.roundRectGradient(x + w * 0.2f, y, w * 0.8f, h, r, gfx::Corners::horizontal(alpha(accent, 0), alpha(accent, 0.5f * p)));
+        }
+        const float fl = pa.flash.at(t);
+        if (fl > 0) b.roundRect(x, y, w, h, r, alpha(col::white, fl));
+        b.setBlend(gfx::Blend::Alpha);
+    }
+
+    void renderSetPanel(const Item &it, PanelAnim &pa, float x, float y) {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        const game::SetInfo &s = c.library->sets()[static_cast<size_t>(it.set)];
+        const bool open = it.set == set_;
+        const float w = kVW + 10 * U - x, h = it.h, r = 10 * U;
+        const uint32_t accent = hex(0x4ebfff);
+        if (open != (pa.chevron.target() > 0.5f)) pa.chevron.go(t, open ? 1 : 0, open ? 600 : 400, open ? Ease::OutElasticQuarter : Ease::OutQuint);
+        panelChrome(pa, x, y, w, h, open, accent);
+        // Fente du chevron (blanche quand ouvert) puis contenu.
+        const float slot = 18 * U * pa.chevron.at(t);
+        if (slot > 0.5f) {
+            b.roundRect(x, y, w, h, r, col::white);
+            icon(c, fa::chevron_right, x + slot / 2 + 1, y + h / 2, 8 * U, pal().background5);
+        }
+        const float cx = x + slot;
+        b.roundRectGradient(cx, y, w - slot, h, r, gfx::Corners::horizontal(pal().background3, pal().background4));
+        if (const gfx::Texture *th = game.thumbnail(it.set)) {
+            const float aspect = (w - slot) / h, ta = static_cast<float>(th->width) / static_cast<float>(th->height);
+            const float cut = std::max(0.0f, (1 - ta / aspect) / 2);
+            b.roundRectTex(*th, cx, y, w - slot, h, r, col::white, 0, cut, 1, 1 - cut);
+            // Voile sombre en trois segments, incliné (0,8).
+            const float vw = w - slot;
+            b.roundRect(cx, y, vw * 0.4f + h * 0.4f, h, r, alpha(col::black, 0.5f), 0.8f);
+            b.roundRectGradient(cx + vw * 0.4f, y, vw * 0.2f, h, 0, gfx::Corners::horizontal(alpha(col::black, 0.5f), alpha(col::black, 0.3f)), 0.8f);
+            b.roundRectGradient(cx + vw * 0.6f - 1, y, vw * 0.45f, h, 0, gfx::Corners::horizontal(alpha(col::black, 0.3f), alpha(col::black, 0.2f)), 0.8f);
+        }
+        panelOverlays(pa, cx, y, w - slot, h, open, accent);
+        const float tx = cx + 15 * U;
+        const std::string title = s.titleUnicode.empty() ? s.title : s.titleUnicode;
+        const std::string artist = s.artistUnicode.empty() ? s.artist : s.artistUnicode;
+        text(c, c.fonts->bold, tx, y + 7.5f * U, 22 * U, col::white, title, gfx::Align::Left, kVW - tx - 40 * U, true);
+        text(c, c.fonts->semibold, tx, y + 32 * U, 16 * U, col::white, artist, gfx::Align::Left, kVW - tx - 40 * U, true);
+        // Statut (local) et pastilles de difficulté.
+        const float py = y + h - 13 * U - 14 * U;
+        const float sw = c.fonts->bold.measure(12 * U, "LOCALE") + 12 * U;
+        b.roundRect(tx, py, sw, 14 * U, 5 * U, alpha(col::black, 0.55f));
+        c.fonts->bold.draw(b, tx + sw / 2, py + 0.5f * U, 12 * U, pal().content2, "LOCALE", gfx::Align::Center);
+        float dx = tx + sw + 5 * U;
+        b.roundRect(dx, py, std::min<size_t>(s.diffs.size(), 12) * 8 * U + 8 * U, 14 * U, 5 * U, alpha(col::black, 0.55f));
+        dx += 4 * U;
+        for (size_t d = 0; d < s.diffs.size() && d < 12; ++d) {
+            const float st = s.diffs[d].stars;
+            b.roundRect(dx, py + 1 * U, 7 * U, 12 * U, 3.5f * U, st >= 0 ? starColor(st) : hex(0x999999));
+            dx += 8 * U;
+        }
+        if (s.diffs.size() > 12) {
+            char more[16];
+            snprintf(more, sizeof(more), "+%zu", s.diffs.size() - 12);
+            c.fonts->semibold.draw(b, dx + 4 * U, py, 12 * U, alpha(col::white, 0.7f), more);
+        }
+    }
+
+    void renderDiffPanel(const Item &it, PanelAnim &pa, float x, float y) {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const game::SetInfo &s = c.library->sets()[static_cast<size_t>(it.set)];
+        const game::DiffInfo &d = s.diffs[static_cast<size_t>(it.diff)];
+        const bool sel = it.set == set_ && it.diff == diff_;
+        const float w = kVW + 10 * U - x, h = it.h, r = 10 * U;
+        const bool known = d.stars >= 0;
+        const uint32_t sc = known ? starColor(d.stars) : hex(0x999999);
+        panelChrome(pa, x, y, w, h, sel, sc);
+        // Fente gauche couleur étoiles avec l'icône du mode.
+        b.roundRect(x, y, w, h, r, sc);
+        const float slot = 14 * U;
+        b.circle(x + slot / 2 + 1 * U, y + h / 2, 4.5f * U, known ? starTextColor(d.stars) : col::black);
+        const float cx = x + slot;
+        b.roundRectGradient(cx, y, w - slot, h, r, gfx::Corners::horizontal(pal().background3, pal().background4));
+        b.roundRectGradient(cx, y, w - slot, h, r, gfx::Corners::horizontal(alpha(sc, 0.25f), alpha(sc, 0)));
+        panelOverlays(pa, cx, y, w - slot, h, sel, sc);
+        float tx = cx + 6.5f * U;
+        // Rang local (meilleur score).
+        const std::vector<LocalScore> scores = game.scoresFor(Game::diffKey(s, d));
+        if (!scores.empty()) {
+            const LocalScore &best = scores.front();
+            const uint32_t rc = rankColor(best.rank);
+            b.roundRect(tx, y + h / 2 - 8 * U, 32 * U, 16 * U, 8 * U, rc);
+            c.fonts->bold.draw(b, tx + 16 * U, y + h / 2 - 7 * U, 12 * U, darken(rc, 2.5f), best.rank.c_str(), gfx::Align::Center);
+            tx += 32 * U + 5 * U;
+        }
+        const float nameW = c.fonts->semibold.draw(b, tx, y + 4 * U, 16 * U, col::white, d.version.c_str());
+        text(c, c.fonts->semibold, tx + nameW + 6 * U, y + 6 * U, 14 * U, pal().content2, "mappée par " + s.creator, gfx::Align::Left,
+             std::max(0.0f, kVW - (tx + nameW + 30 * U)));
+        const float pw = starPill(c, tx, y + 24 * U, 15 * U, d.stars, 1, known);
+        // Compteur d'étoiles (10 petites étoiles, remplies selon la note).
+        const float full = known ? std::min(10.0f, d.stars) : 0;
+        for (int k = 0; k < 10; ++k) {
+            const float fill = std::clamp(full - static_cast<float>(k), 0.0f, 1.0f);
+            const float ss = 8 * U * (0.6f + 0.4f * fill);
+            icon(c, fa::star, tx + pw + 12 * U + static_cast<float>(k) * 11 * U, y + 31.5f * U, ss,
+                 fill > 0 ? sc : alpha(col::white, 0.15f));
+        }
+    }
+
+    void renderTitleWedge() {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        const game::SetInfo &s = c.library->sets()[static_cast<size_t>(set_)];
+        const game::DiffInfo &d = s.diffs[static_cast<size_t>(std::clamp(diff_, 0, static_cast<int>(s.diffs.size()) - 1))];
+        const float wx = wedgeX_.at(t), wa = wedgeA_.at(t);
+        if (wa <= 0.001f) return;
+        b.pushTransform(wx, 0, 1, wa);
+        const float x = -20 * U, top = -20 * U;
+        const float pad = 32 * U, tb = game.toolbar.kHeight;
+        const float h = tb + 20 * U + 250 * U;
+        const float w = kColW + 20 * U;
+        // Fond : Background5 opaque à 90 % sur 70 %, puis fondu ; reflet additif à gauche.
+        b.roundRectGradient(x, top, w, h, 10 * U, gfx::Corners::horizontal(alpha(pal().background5, 0.9f), alpha(pal().background5, 0.6f)), kShear);
+        b.roundRect(x, top, w * 0.7f, h, 10 * U, alpha(pal().background5, 0.9f), kShear);
+        b.setBlend(gfx::Blend::Additive);
+        b.roundRectGradient(x, top, w * 0.6f, h, 10 * U, gfx::Corners::horizontal(alpha(pal().background2, 0.5f), alpha(pal().background2, 0)), kShear);
+        b.setBlend(gfx::Blend::Alpha);
+        // Le contenu suit l'inclinaison : décalage selon la hauteur.
+        auto sx = [&](float yy) { return x + pad + 20 * U - kShear * (yy - (top + h / 2)); };
+        float y = top + 20 * U + tb + pad * 0.5f;
+        // Pastille de statut.
+        const float pw = c.fonts->bold.measure(14 * U, "LOCALE") + 12 * U;
+        b.roundRect(sx(y + 9 * U), y, pw, 18 * U, 9 * U, alpha(col::black, 0.5f));
+        c.fonts->bold.draw(b, sx(y + 9 * U) + pw / 2, y + 1.5f * U, 14 * U, pal().content2, "LOCALE", gfx::Align::Center);
+        y += 18 * U + 4 * U;
+        const std::string title = s.titleUnicode.empty() ? s.title : s.titleUnicode;
+        const std::string artist = s.artistUnicode.empty() ? s.artist : s.artistUnicode;
+        text(c, c.fonts->bold, sx(y + 16 * U), y - 2 * U, 32 * U, col::white, title, gfx::Align::Left, w - pad * 3, true);
+        y += 32 * U + 2 * U;
+        text(c, c.fonts->semibold, sx(y + 9 * U), y, 18 * U, col::white, artist, gfx::Align::Left, w - pad * 3, true);
+        y += 18 * U + 8 * U;
+        // Statistiques : durée et BPM (adaptés au mod de vitesse), objets.
+        const double rate = game.mods.rate();
+        char bpm[48], len[32], objs[48];
+        snprintf(bpm, sizeof(bpm), "%.0f", d.bpm * rate);
+        snprintf(len, sizeof(len), "%d:%02d", static_cast<int>(d.lengthMs / rate / 1000) / 60, static_cast<int>(d.lengthMs / rate / 1000) % 60);
+        snprintf(objs, sizeof(objs), "%d", d.objects);
+        struct Stat {
+            const char *glyph, *value;
+        } stats[] = {{fa::clock, len}, {fa::music, bpm}, {fa::bullseye, objs}};
+        float stx = sx(y + 15 * U);
+        for (const Stat &st : stats) {
+            const float vw = c.fonts->semibold.measure(18 * U, st.value);
+            const float bw = 18 * U + 8 * U + vw + 20 * U;
+            b.roundRect(stx, y, bw, 30 * U, 5 * U, alpha(col::black, 0.2f), kShear);
+            icon(c, st.glyph, stx + 10 * U + 9 * U, y + 15 * U, 16 * U, pal().content2);
+            c.fonts->semibold.draw(b, stx + 10 * U + 18 * U + 6 * U, y + 5 * U, 18 * U, pal().content2, st.value);
+            stx += bw + 4 * U;
+        }
+        y += 30 * U + 10 * U;
+        // Encart de difficulté : pastille d'étoiles, nom, auteur ; barres des attributs.
+        const float dx = sx(y + 40 * U) - 8 * U, dw = w - pad * 2.2f, dh = 83 * U;
+        const uint32_t sc = d.stars >= 0 ? starColor(d.stars) : hex(0x999999);
+        b.roundRect(dx, y, dw, dh, 10 * U, sc, kShear);
+        float rx = sx(y + 15 * U) + 4 * U;
+        const float pillW = starPill(c, rx, y + 5 * U, 20 * U, d.stars, 1, d.stars >= 0);
+        const uint32_t fg = d.stars >= 0 ? starTextColor(d.stars) : alpha(col::black, 0.75f);
+        rx += pillW + 6 * U;
+        rx += c.fonts->semibold.draw(b, rx, y + 6 * U, 16 * U, fg, d.version.c_str()) + 6 * U;
+        rx += c.fonts->regular.draw(b, rx, y + 6 * U, 16 * U, fg, "mappée par") + 5 * U;
+        text(c, c.fonts->semibold, rx, y + 6 * U, 16 * U, fg, s.creator, gfx::Align::Left, std::max(10.0f, dx + dw - rx - 20 * U));
+        const float iy = y + 30 * U;
+        b.roundRect(dx + 2 * U - kShear * 26.5f * U * 0, iy, dw - 4 * U, 53 * U - 2 * U, 8 * U, alpha(pal().background5, 0.92f), kShear);
+        // Barres : cercles / sliders / spinners puis CS AR OD HP (modifiés par les mods).
+        float cs = d.cs, ar = d.ar, od = d.od, hp = d.hp;
+        if (game.mods.easy) cs *= 0.5f, ar *= 0.5f, od *= 0.5f, hp *= 0.5f;
+        if (game.mods.hardRock) cs = std::min(10.0f, cs * 1.3f), ar = std::min(10.0f, ar * 1.4f), od = std::min(10.0f, od * 1.4f),
+                                hp = std::min(10.0f, hp * 1.4f);
+        if (rate != 1.0) {
+            // AR et OD effectifs une fois la vitesse appliquée.
+            const double preempt = ar < 5 ? 1200 + 600 * (5 - ar) / 5 : 1200 - 750 * (ar - 5) / 5;
+            const double p2 = preempt / rate;
+            ar = static_cast<float>(p2 > 1200 ? 5 - (p2 - 1200) / 120 : 5 + (1200 - p2) / 150);
+            const double w300 = (80 - 6 * od) / rate;
+            od = static_cast<float>((80 - w300) / 6);
+        }
+        struct Bar {
+            const char *label;
+            float value, max, base;
+        };
+        const float total = static_cast<float>(std::max(1, d.objects));
+        const Bar bars[] = {{"Cercles", static_cast<float>(d.circles), total, static_cast<float>(d.circles)},
+                            {"Sliders", static_cast<float>(d.sliders), total, static_cast<float>(d.sliders)},
+                            {"CS", cs, 10, d.cs},
+                            {"AR", ar, 10, d.ar},
+                            {"OD", od, 10, d.od},
+                            {"HP", hp, 10, d.hp}};
+        float bx = sx(iy + 26 * U) + 26 * U;
+        for (int i = 0; i < 6; ++i) {
+            const Bar &br = bars[i];
+            if (i == 2) bx += 24 * U;
+            const float bw = 70 * U;
+            c.fonts->semibold.draw(b, bx, iy + 8 * U, 12 * U, pal().content2, br.label);
+            char v[16];
+            if (i < 2) snprintf(v, sizeof(v), "%.0f", br.value);
+            else snprintf(v, sizeof(v), "%.1f", br.value);
+            const uint32_t vc = i >= 2 && br.value > br.base + 0.05f ? col::red1 : i >= 2 && br.value < br.base - 0.05f ? col::lime1 : col::white;
+            c.fonts->semibold.draw(b, bx + bw, iy + 8 * U, 12 * U, vc, v, gfx::Align::Right);
+            b.roundRect(bx, iy + 30 * U, bw, 2 * U, U, alpha(col::black, 0.5f));
+            b.roundRect(bx, iy + 30 * U, bw * std::clamp(br.value / br.max, 0.0f, 1.0f), 2 * U, U, vc == col::white ? col::white : vc);
+            bx += bw + 8 * U;
+        }
+        b.popTransform();
+    }
+
+    void renderLeaderboard() {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        const game::SetInfo &s = c.library->sets()[static_cast<size_t>(set_)];
+        const game::DiffInfo &d = s.diffs[static_cast<size_t>(std::clamp(diff_, 0, static_cast<int>(s.diffs.size()) - 1))];
+        const float wa = wedgeA_.at(t);
+        if (wa <= 0.001f) return;
+        b.pushTransform(wedgeX_.at(t), 0, 1, wa);
+        const float top = game.toolbar.kHeight + 250 * U + 4 * U + 10 * U;
+        const float x0 = 30 * U;
+        // En-tête : onglet « Classement local ».
+        const float tw = c.fonts->semibold.measure(16 * U, "Classement local") + 30 * U;
+        b.roundRect(x0 - kShear * 0, top, tw, 26 * U, 13 * U, pal().background3, kShear);
+        c.fonts->semibold.draw(b, x0 + tw / 2, top + 4 * U, 16 * U, col::white, "Classement local", gfx::Align::Center);
+        const std::vector<LocalScore> scores = game.scoresFor(Game::diffKey(s, d));
+        const std::string key = Game::diffKey(s, d);
+        if (key != boardKey_) {
+            boardKey_ = key;
+            boardAt_ = t;
+        }
+        float y = top + 40 * U;
+        if (scores.empty()) {
+            const float a = std::min(1.0f, static_cast<float>((t - boardAt_ - 200) / 300));
+            if (a > 0) {
+                c.fonts->regular.draw(b, x0 + 10 * U, y + 10 * U, 16 * U, alpha(pal().content2, a), "Pas encore de score sur cette difficulté.");
+                c.fonts->regular.draw(b, x0 + 10 * U, y + 34 * U, 14 * U, alpha(pal().light4, a), "Tes scores restent sur la console.");
+            }
+        }
+        const float maxY = footerTop() - 10 * U;
+        char line[128];
+        for (size_t i = 0; i < scores.size(); ++i) {
+            const float rowH = 50 * U;
+            if (y + rowH > maxY) break;
+            // Apparition en cascade : 200 + 30 ms par ligne, depuis -20 u.
+            const float k = anim::ease(Ease::OutQuint, static_cast<float>(std::clamp((t - boardAt_ - 200 - 30.0 * static_cast<double>(i)) / 300.0, 0.0, 1.0)));
+            if (k <= 0) break;
+            const LocalScore &sc = scores[i];
+            const float rx = x0 - kShear * (y - top) * 0 + (1 - k) * -20 * U;
+            const float rw = kColW - 80 * U;
+            b.pushAlpha(k);
+            b.roundRect(rx, y, rw, rowH, 10 * U, pal().background4, kShear);
+            snprintf(line, sizeof(line), "#%zu", i + 1);
+            c.fonts->bold.draw(b, rx + 28 * U, y + 15 * U, 18 * U, pal().content2, line, gfx::Align::Center);
+            const uint32_t rc = rankColor(sc.rank);
+            b.roundRect(rx + 56 * U, y + rowH / 2 - 10 * U, 40 * U, 20 * U, 10 * U, rc, kShear);
+            c.fonts->bold.draw(b, rx + 76 * U, y + rowH / 2 - 8.5f * U, 15 * U, darken(rc, 2.5f), sc.rank.c_str(), gfx::Align::Center);
+            snprintf(line, sizeof(line), "%lld", sc.score);
+            c.fonts->light.draw(b, rx + 110 * U, y + 6 * U, 22 * U, col::white, line);
+            snprintf(line, sizeof(line), "%.2f%%   %dx   %s", sc.accuracy * 100, sc.maxCombo, sc.mods.c_str());
+            c.fonts->semibold.draw(b, rx + 112 * U, y + 30 * U, 13 * U, pal().content2, line);
+            c.fonts->regular.draw(b, rx + rw - 20 * U, y + 17 * U, 14 * U, pal().light4, relativeDate(sc.date).c_str(), gfx::Align::Right);
+            b.popTransform();
+            y += rowH + 4 * U;
+        }
+        b.popTransform();
+    }
+
+    static std::string relativeDate(long long date) {
+        const long long now = static_cast<long long>(time(nullptr));
+        const long long d = std::max(0LL, now - date);
+        char buf[48];
+        if (d < 3600) snprintf(buf, sizeof(buf), "il y a %lld min", d / 60);
+        else if (d < 86400) snprintf(buf, sizeof(buf), "il y a %lld h", d / 3600);
+        else snprintf(buf, sizeof(buf), "il y a %lld j", d / 86400);
+        return buf;
+    }
+
+    void renderFilter() {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        const float wa = wedgeA_.at(t);
+        const float x = kColW + 20 * U - wedgeX_.at(t), top = -10 * U;
+        const float w = kVW - x + 40 * U, h = kFilterBottom - top;
+        b.pushAlpha(wa);
+        b.roundRectGradient(x, top, w, h, 10 * U, gfx::Corners::horizontal(alpha(pal().background5, 0.6f), alpha(pal().background5, 0.9f)), kShear);
+        const float bx = x + 18 * U, bw = kVW - bx - 30 * U;
+        float y = game.toolbar.kHeight + 12 * U;
+        b.roundRect(bx, y, bw, 42 * U, 7 * U, pal().background3, kShear);
+        icon(c, fa::magnifying_glass, bx + 24 * U - kShear * 0, y + 21 * U, 15 * U, pal().light2);
+        const bool empty = query_.empty();
+        const std::string shown = empty ? "tape pour chercher..." : query_ + "_";
+        c.fonts->semibold.draw(b, bx + 46 * U, y + 11 * U, 18 * U, empty ? pal().light4 : col::white, shown.c_str());
+        char line[64];
+        snprintf(line, sizeof(line), "%zu correspondance%s", visible_.size(), visible_.size() > 1 ? "s" : "");
+        c.fonts->regular.draw(b, bx + bw - 16 * U, y + 13 * U, 14 * U, col::orange1, line, gfx::Align::Right);
+        y += 42 * U + 8 * U;
+        // Mods actifs et vitesse.
+        const std::string mods = game.mods.label();
+        c.fonts->semibold.draw(b, bx + 4 * U, y + 4 * U, 14 * U, pal().content2, "Mods :");
+        if (mods.empty()) {
+            c.fonts->regular.draw(b, bx + 52 * U, y + 4 * U, 14 * U, pal().light4, "aucun  (Carré / F1)");
+        } else {
+            float mx = bx + 70 * U;
+            size_t p = 0;
+            while (p < mods.size()) {
+                size_t e = mods.find(' ', p);
+                if (e == std::string::npos) e = mods.size();
+                const std::string acr = mods.substr(p, e - p);
+                int type = 1;
+                for (const ModDef &d : kMods)
+                    if (acr == d.acronym || (acr == "AUTO" && std::string(d.acronym) == "AT")) type = d.type;
+                modIcon(c, acr == "AUTO" ? "AT" : acr.c_str(), mx, y + 12 * U, 18 * U, modTypeColor(type));
+                mx += 34 * U;
+                p = e + 1;
+            }
+        }
+        b.popTransform();
+    }
+
+    void renderEmpty() {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const float cx = kColW / 2;
+        if (c.library->scanning()) {
+            spinner(c, cx, kVH / 2 - 30 * U, 40 * U, 1);
+            c.fonts->semibold.draw(b, cx, kVH / 2 + 10 * U, 20 * U, col::white, "Lecture des maps...", gfx::Align::Center);
+            return;
+        }
+        icon(c, fa::compact_disc, cx, kVH / 2 - 60 * U, 60 * U, alpha(col::white, 0.3f));
+        c.fonts->semibold.draw(b, cx, kVH / 2, 26 * U, col::white,
+                               c.library->sets().empty() ? "Aucune map installée" : "Aucune map ne correspond", gfx::Align::Center);
+        c.fonts->regular.draw(b, cx, kVH / 2 + 40 * U, 18 * U, pal().content2,
+                              c.library->sets().empty() ? "Croix pour en télécharger" : "Rond pour effacer la recherche", gfx::Align::Center);
+    }
+
+    // --- Pied de page ----------------------------------------------------------------------
+
+    float footerTop() const { return kVH - kFooterH + footerY_.at(ms(game.ctx)); }
+    float footerBtnX(int i) const { return (12 + 240 + 60) * U + static_cast<float>(i) * (kFooterBtnW + 7 * U); }
+    float logoX() const { return kVW - 76 * U; }
+    float logoY() const { return kVH - 36 * U; }
+
+    void renderFooter() {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        const float fy = footerTop();
+        b.rect(0, fy, kVW, kVH - fy + 2, pal().background5);
+        const char *glyphs[3] = {fa::wand_magic_sparkles, fa::shuffle, fa::sliders};
+        const char *labels[3] = {"Mods", "Au hasard", "Options"};
+        const uint32_t accents[3] = {col::lime1, col::blue1, col::purple1};
+        const int pads[3] = {static_cast<int>(Pad::Square), static_cast<int>(Pad::Triangle), static_cast<int>(Pad::Options)};
+        for (int i = 0; i < 3; ++i) {
+            // Barre des mods actifs au-dessus du bouton Mods.
+            const float bx = footerBtnX(i), by = fy - kFooterBtnH + 10 * U + 25 * U + footerBtnY_[i].at(t);
+            if (i == 0 && !game.mods.label().empty()) {
+                const float mult = game.mods.scoreMultiplier();
+                b.roundRect(bx + 4 * U, by - 30 * U - 5 * U, kFooterBtnW, 30 * U, 10 * U, pal().background3, kShear);
+                b.roundRect(bx + 4 * U, by - 30 * U - 5 * U, kFooterBtnW * 0.35f, 30 * U, 10 * U, pal().background5, kShear);
+                char m[16];
+                snprintf(m, sizeof(m), "%.2fx", mult);
+                c.fonts->bold.draw(b, bx + 4 * U + kFooterBtnW * 0.175f, by - 30 * U + 1 * U, 13 * U,
+                                   mult > 1.001f ? col::red1 : mult < 0.999f ? col::lime1 : col::white, m, gfx::Align::Center);
+                const std::string lab = game.mods.label();
+                text(c, c.fonts->bold, bx + 4 * U + kFooterBtnW * 0.675f, by - 30 * U + 1 * U, 13 * U, col::white, lab, gfx::Align::Center,
+                     kFooterBtnW * 0.6f);
+            }
+            footerButton(c, footerFx_[i], bx, by, glyphs[i], labels[i], accents[i], i == 0 && modsOpen_, 1, pads[i]);
+        }
+        backButton(c, backFx_, 12 * U, kVH - 12 * U + footerY_.at(t), "retour");
     }
 
     void typing(const UiInput &in) {
@@ -212,7 +1006,6 @@ private:
         bool changed = false;
         for (int code = 0x04; code <= 0x2C; ++code) {
             if (!k[code] || prevKeys_[code]) continue;
-            // Z et X restent des touches de jeu : on ne les capte pas tant que la recherche est vide.
             char ch = 0;
             if (code <= 0x1D) ch = static_cast<char>((shift ? 'A' : 'a') + (code - 0x04));
             else if (code <= 0x26) ch = static_cast<char>('1' + (code - 0x1E));
@@ -228,326 +1021,30 @@ private:
             }
         }
         for (int i = 0; i < 256; ++i) prevKeys_[i] = k[i];
-        if (changed) filter();
-    }
-
-    std::vector<float> footer(std::vector<float> &widths) {
-        return ui::footerLayout(game.ctx, {"Retour", "Mods", "Au hasard", "Options", "Jouer"}, 0, widths);
-    }
-
-    void footerAction(int i) {
-        Context &c = game.ctx;
-        const auto &sets = c.library->sets();
-        switch (i) {
-        case 0:
-            c.play(c.sfx->uiBack);
-            game.goTo(game.makeMainMenu());
-            break;
-        case 1:
-            modsOpen_ = true;
-            c.play(c.sfx->uiSelect);
-            break;
-        case 2:
-            if (!visible_.empty()) {
-                set_ = visible_[static_cast<size_t>(rand() % static_cast<int>(visible_.size()))];
-                diff_ = 0;
-                wedgeTime_ = c.now;
-                changeTime_ = c.now;
-                pending_ = true;
-                c.play(c.sfx->uiOpen, 0.6f);
-            }
-            break;
-        case 3: game.goTo(game.makeOptions()); break;
-        default:
-            if (!visible_.empty() && set_ < static_cast<int>(sets.size())) {
-                game.select(set_, diff_, false);
-                c.play(c.sfx->uiSelect);
-                c.saveSettings();
-                game.goTo(game.makePlay());
-            }
-            break;
+        if (changed) {
+            filter();
+            rebuild();
         }
     }
 
-    // --- Rendu ------------------------------------------------------------------------------
-
-    void renderSet(int s, const game::SetInfo &set, bool open, float y, float in) {
-        Context &c = game.ctx;
-        gfx::SpriteBatch &b = *c.batch;
-        const float centre = std::fabs(y + kSetH / 2 - kVH * 0.45f) / kVH;
-        const float x = kListX + centre * centre * 220 - (open ? 50 : 0) + (1 - in) * 600;
-        const float w = kVW - x + 40;
-        const uint32_t edge = open ? ui::color::pink : gfx::rgba(255, 255, 255, 30);
-        ui::roundRect(c, x - 3, y - 3, w + 6, kSetH + 6, 20, edge);
-        ui::roundRect(c, x, y, w, kSetH, 18, gfx::rgba(30, 26, 38));
-        if (const gfx::Texture *th = game.thumbnail(s)) {
-            // Image recadrée à la proportion de la carte.
-            const float aspect = w / kSetH, ta = static_cast<float>(th->width) / static_cast<float>(th->height);
-            float u0 = 0, u1 = 1, v0 = 0, v1 = 1;
-            if (ta > aspect) {
-                const float cut = (1 - aspect / ta) / 2;
-                u0 = cut;
-                u1 = 1 - cut;
-            } else {
-                const float cut = (1 - ta / aspect) / 2;
-                v0 = cut;
-                v1 = 1 - cut;
-            }
-            b.quad(*th, x + 4, y + 4, w - 8, kSetH - 8, gfx::rgba(255, 255, 255, open ? 255 : 200), u0, v0, u1, v1);
-        }
-        // Dégradé sombre à gauche pour la lisibilité du texte (comme lazer).
-        b.gradient(x + 4, y + 4, w - 8, kSetH - 8, gfx::rgba(0, 0, 0, 60), gfx::rgba(0, 0, 0, 150));
-        for (int k = 0; k < 10; ++k)
-            b.rect(x + 4 + static_cast<float>(k) * 60, y + 4, 60, kSetH - 8, gfx::rgba(0, 0, 0, static_cast<uint8_t>(150 - k * 15)));
-        const std::string title = c.fonts->bold.ellipsize(36, set.title, w - 80);
-        c.fonts->bold.drawShadow(b, x + 28, y + 16, 36, ui::color::text, title.c_str());
-        char line[300];
-        snprintf(line, sizeof(line), "%s  ·  %s", set.artist.c_str(), set.creator.c_str());
-        const std::string sub = c.fonts->semibold.ellipsize(24, line, w - 80);
-        c.fonts->semibold.drawShadow(b, x + 30, y + 60, 24, gfx::rgba(230, 225, 240), sub.c_str());
-        for (size_t d = 0; d < set.diffs.size() && d < 16; ++d) {
-            const float dx = x + 40 + static_cast<float>(d) * 26;
-            b.centered(c.tex->disc, dx, y + 104, 20, gfx::rgba(0, 0, 0, 150));
-            b.centered(c.tex->ringThick, dx, y + 104, 18, ui::starColor(set.diffs[d].stars));
-        }
-        hits_.push_back({x, y, w, kSetH, s, -1});
-        if (!open) return;
-        float dy = y + kSetH + 8;
-        for (int d = 0; d < static_cast<int>(set.diffs.size()); ++d) {
-            const game::DiffInfo &df = set.diffs[static_cast<size_t>(d)];
-            const bool sel = d == diff_;
-            const float dx = x + 50 - (sel ? 24 : 0), dw = kVW - dx + 40;
-            const uint32_t sc = ui::starColor(df.stars);
-            ui::roundRect(c, dx - 3, dy - 3, dw + 6, kDiffH + 6, 18, sel ? gfx::rgba(255, 255, 255) : gfx::rgba(255, 255, 255, 20));
-            ui::roundRect(c, dx, dy, dw, kDiffH, 16, sel ? gfx::rgba(48, 40, 62) : gfx::rgba(36, 32, 46, 235));
-            b.rect(dx, dy + 10, 8, kDiffH - 20, sc);
-            b.centered(c.tex->ringThick, dx + 50, dy + kDiffH / 2, 44, sc);
-            b.centered(c.tex->disc, dx + 50, dy + kDiffH / 2, 18, sc);
-            const std::string ver = c.fonts->bold.ellipsize(28, df.version, dw - 340);
-            c.fonts->bold.draw(b, dx + 90, dy + 12, 28, ui::color::text, ver.c_str());
-            char stars[32];
-            if (df.stars >= 0)
-                snprintf(stars, sizeof(stars), "%.2f", df.stars);
-            else
-                snprintf(stars, sizeof(stars), "?");
-            // Étoiles pleines comme dans lazer.
-            const int full = df.stars > 0 ? std::min(10, static_cast<int>(df.stars)) : 0;
-            for (int k = 0; k < 10; ++k)
-                ui::icon(c, ui::Icon::Star, dx + 100 + static_cast<float>(k) * 26, dy + 60, 18,
-                         k < full ? sc : gfx::rgba(255, 255, 255, 40));
-            ui::roundRect(c, dx + dw - 190, dy + 22, 110, 40, 20, sc);
-            c.fonts->bold.draw(b, dx + dw - 135, dy + 27, 26, df.stars > 6.5f || df.stars < 0 ? ui::color::text : gfx::rgba(20, 20, 30), stars,
-                               gfx::Align::Center);
-            hits_.push_back({dx, dy, dw, kDiffH, s, d});
-            dy += kDiffH + 8;
-        }
-    }
-
-    void renderWedge(float in) {
-        Context &c = game.ctx;
-        gfx::SpriteBatch &b = *c.batch;
-        const game::SetInfo *set = game.currentSet();
-        const game::DiffInfo *df = game.currentDiff();
-        if (!set || !df || set_ != game.selectedSet) {
-            set = &c.library->sets()[static_cast<size_t>(set_)];
-            df = &set->diffs[static_cast<size_t>(std::clamp(diff_, 0, static_cast<int>(set->diffs.size()) - 1))];
-        }
-        const float k = anim::outQuint(static_cast<float>((c.now - wedgeTime_) / 0.5)) * in;
-        const float x = -40 - (1 - k) * 200, y = 70, w = 980, h = 330;
-        ui::skewed(c, x, y, w, h, 40, gfx::withAlpha(gfx::rgba(20, 16, 28), 0.95f * k));
-        if (const gfx::Texture *th = game.thumbnail(set_)) {
-            const float ta = static_cast<float>(th->width) / static_cast<float>(th->height), aspect = (w - 60) / h;
-            float v0 = 0, v1 = 1;
-            if (ta < aspect) {
-                const float cut = (1 - ta / aspect) / 2;
-                v0 = cut;
-                v1 = 1 - cut;
-            }
-            b.quad(*th, x + 60, y + 6, w - 90, h - 12, gfx::withAlpha(gfx::rgba(255, 255, 255), k), 0, v0, 1, v1);
-            b.gradient(x + 60, y + 6, w - 90, h - 12, gfx::rgba(0, 0, 0, 30), gfx::withAlpha(gfx::rgba(0, 0, 0), 0.85f * k));
-        }
-        b.rect(x + 60, y + h - 6, w - 90, 6, gfx::withAlpha(ui::starColor(df->stars), k));
-        // Pastille d'étoiles et nom de difficulté.
-        char line[256];
-        const uint32_t sc = ui::starColor(df->stars);
-        if (df->stars >= 0)
-            snprintf(line, sizeof(line), "★ %.2f", df->stars);
-        else
-            snprintf(line, sizeof(line), "★ ?");
-        ui::roundRect(c, 80, y + 22, 140, 44, 22, gfx::withAlpha(sc, k));
-        c.fonts->bold.draw(b, 150, y + 28, 28, gfx::withAlpha(df->stars > 6.5f || df->stars < 0 ? ui::color::text : gfx::rgba(20, 20, 30), k),
-                           line, gfx::Align::Center);
-        const std::string ver = c.fonts->semibold.ellipsize(28, df->version, 640);
-        c.fonts->semibold.drawShadow(b, 236, y + 28, 28, gfx::withAlpha(ui::color::text, k), ver.c_str());
-        const std::string title = c.fonts->bold.ellipsize(52, set->title, 840);
-        c.fonts->bold.drawShadow(b, 80, y + 150, 52, gfx::withAlpha(ui::color::text, k), title.c_str());
-        snprintf(line, sizeof(line), "%s", set->artist.c_str());
-        c.fonts->semibold.drawShadow(b, 82, y + 212, 32, gfx::withAlpha(gfx::rgba(235, 230, 245), k), line);
-        snprintf(line, sizeof(line), "mappée par %s", set->creator.c_str());
-        c.fonts->regular.drawShadow(b, 82, y + 254, 24, gfx::withAlpha(ui::color::textDim, k), line);
-
-        // Rangée de statistiques avec icônes colorées.
-        const float sy = y + h + 18;
-        struct Stat {
-            ui::Icon icon;
-            uint32_t color;
-            std::string text;
-        };
-        char bpm[32];
-        snprintf(bpm, sizeof(bpm), "%.0f BPM", df->bpm);
-        const Stat stats[] = {{ui::Icon::Clock, ui::color::yellow, ui::formatTime(df->lengthMs)},
-                              {ui::Icon::Music, ui::color::pink, bpm},
-                              {ui::Icon::Circles, ui::color::blue, std::to_string(df->circles)},
-                              {ui::Icon::Sliders, ui::color::lime, std::to_string(df->sliders)}};
-        float sx = 80;
-        for (const Stat &st : stats) {
-            ui::icon(c, st.icon, sx + 14, sy + 18, 28, gfx::withAlpha(st.color, k));
-            sx += 40 + c.fonts->semibold.drawShadow(b, sx + 36, sy + 2, 28, gfx::withAlpha(ui::color::text, k), st.text.c_str()) + 30;
-        }
-        // Barres CS / AR / OD / HP.
-        const char *names[] = {"CS", "AR", "OD", "HP"};
-        const float values[] = {df->cs, df->ar, df->od, df->hp};
-        const uint32_t cols[] = {ui::color::blue, ui::color::pink, ui::color::yellow, ui::color::lime};
-        for (int i = 0; i < 4; ++i) {
-            const float bx = 80 + static_cast<float>(i) * 220, by = sy + 56;
-            c.fonts->bold.draw(b, bx, by, 24, gfx::withAlpha(ui::color::textDim, k), names[i]);
-            ui::roundRect(c, bx + 50, by + 8, 120, 12, 6, gfx::withAlpha(gfx::rgba(255, 255, 255, 40), k));
-            ui::roundRect(c, bx + 50, by + 8, 120 * std::clamp(values[i] / 10.0f, 0.05f, 1.0f), 12, 6, gfx::withAlpha(cols[i], k));
-            snprintf(line, sizeof(line), "%.1f", values[i]);
-            c.fonts->semibold.draw(b, bx + 180, by, 22, gfx::withAlpha(ui::color::text, k), line);
-        }
-        const std::string mods = game.mods.label();
-        if (!mods.empty()) {
-            snprintf(line, sizeof(line), "Mods : %s", mods.c_str());
-            c.fonts->bold.drawShadow(b, 80, sy + 100, 28, gfx::withAlpha(ui::color::yellow, k), line);
-        }
-    }
-
-    void renderScores(float in) {
-        Context &c = game.ctx;
-        gfx::SpriteBatch &b = *c.batch;
-        const game::SetInfo &set = c.library->sets()[static_cast<size_t>(set_)];
-        const game::DiffInfo &df = set.diffs[static_cast<size_t>(std::clamp(diff_, 0, static_cast<int>(set.diffs.size()) - 1))];
-        const std::vector<LocalScore> scores = game.scoresFor(Game::diffKey(set, df));
-        const float x = 40 - (1 - in) * 500, y = 560;
-        ui::roundRect(c, x, y, 880, 420, 22, gfx::rgba(20, 16, 28, 210));
-        c.fonts->bold.draw(b, x + 28, y + 18, 28, ui::color::text, "Classement local");
-        if (scores.empty()) c.fonts->regular.draw(b, x + 28, y + 70, 24, ui::color::textDim, "Pas encore de score sur cette difficulté.");
-        char line[128];
-        for (size_t i = 0; i < scores.size() && i < 5; ++i) {
-            const LocalScore &s = scores[i];
-            const float ry = y + 66 + static_cast<float>(i) * 68;
-            ui::roundRect(c, x + 20, ry, 840, 60, 14, gfx::rgba(255, 255, 255, 14));
-            uint32_t rc = ui::color::pink;
-            if (s.rank[0] == 'S') rc = ui::color::yellow;
-            else if (s.rank == "A") rc = ui::color::lime;
-            else if (s.rank == "B") rc = ui::color::blue;
-            c.fonts->bold.draw(b, x + 70, ry + 8, 38, rc, s.rank.c_str(), gfx::Align::Center);
-            snprintf(line, sizeof(line), "%lld", s.score);
-            c.fonts->bold.draw(b, x + 130, ry + 12, 30, ui::color::text, line);
-            snprintf(line, sizeof(line), "%.2f%%  ·  %dx  %s", s.accuracy * 100, s.maxCombo, s.mods.c_str());
-            c.fonts->semibold.draw(b, x + 840, ry + 16, 24, ui::color::textDim, line, gfx::Align::Right);
-        }
-    }
-
-    void renderSearch(float in) {
-        Context &c = game.ctx;
-        gfx::SpriteBatch &b = *c.batch;
-        const float x = kListX + 40 + (1 - in) * 500, y = 20, w = kVW - x - 30;
-        ui::roundRect(c, x, y, w, 62, 31, gfx::rgba(20, 16, 28, 220));
-        ui::icon(c, ui::Icon::Search, x + 36, y + 31, 28, ui::color::pink);
-        const bool empty = query_.empty();
-        const std::string shown = empty ? "Tape pour chercher (clavier)…" : query_ + "_";
-        c.fonts->semibold.draw(b, x + 70, y + 16, 26, empty ? ui::color::textDim : ui::color::text, shown.c_str());
-        char line[64];
-        snprintf(line, sizeof(line), "%zu / %zu", visible_.size(), c.library->sets().size());
-        c.fonts->semibold.draw(b, x + w - 26, y + 16, 26, ui::color::textDim, line, gfx::Align::Right);
-    }
-
-    void renderFooter() {
-        Context &c = game.ctx;
-        gfx::SpriteBatch &b = *c.batch;
-        b.rect(0, kVH - ui::kFooterH, kVW, ui::kFooterH, gfx::rgba(18, 16, 24, 235));
-        std::vector<float> widths;
-        const std::vector<float> xs = footer(widths);
-        const char *labels[] = {"Retour", "Mods", "Au hasard", "Options", "Jouer"};
-        const uint32_t cols[] = {ui::color::pink, ui::color::purple, gfx::rgba(70, 180, 110), gfx::rgba(52, 160, 230), ui::color::pink};
-        const ui::PadIcon pads[] = {ui::PadIcon::Circle, ui::PadIcon::Square, ui::PadIcon::Triangle, ui::PadIcon::Options, ui::PadIcon::Cross};
-        for (size_t i = 0; i < xs.size(); ++i) {
-            float x = xs[i];
-            if (i == 4) x = kVW - widths[i] - 20;  // "Jouer" à droite
-            ui::footerButton(c, x, widths[i], labels[i], cols[i], pads[i], footerHover_[i]);
-        }
-    }
-
-    void updateMods(const UiInput &in) {
-        Context &c = game.ctx;
-        if (in.back || in.extra2) {
-            modsOpen_ = false;
-            c.play(c.sfx->uiBack);
-            return;
-        }
-        if (in.up) modCursor_ = (modCursor_ + 4) % 5;
-        if (in.down) modCursor_ = (modCursor_ + 1) % 5;
-        if (in.up || in.down) c.play(c.sfx->uiHover, 0.8f);
-        bool toggle = in.confirm;
-        for (int i = 0; i < 5; ++i) {
-            const float ry = 360 + static_cast<float>(i) * 100;
-            if (in.hover(kVW / 2 - 400, ry, 800, 88)) modCursor_ = i;
-            if (in.clicked(kVW / 2 - 400, ry, 800, 88)) toggle = true;
-        }
-        if (in.mouseClick && !in.hover(kVW / 2 - 440, 240, 880, 660)) {
-            modsOpen_ = false;
-            return;
-        }
-        if (toggle) {
-            game::Mods &m = game.mods;
-            bool *flags[] = {&m.easy, &m.noFail, &m.hidden, &m.hardRock, &m.autoplay};
-            *flags[modCursor_] = !*flags[modCursor_];
-            if (modCursor_ == 0 && m.easy) m.hardRock = false;
-            if (modCursor_ == 3 && m.hardRock) m.easy = false;
-            c.play(c.sfx->uiSelect);
-        }
-    }
-
-    void renderMods() {
-        Context &c = game.ctx;
-        gfx::SpriteBatch &b = *c.batch;
-        b.rect(0, 0, kVW, kVH, gfx::rgba(0, 0, 0, 160));
-        const float x = kVW / 2 - 440, y = 240;
-        ui::roundRect(c, x, y, 880, 660, 30, gfx::rgba(26, 22, 34, 250));
-        ui::trianglePanel(c, x + 20, y + 20, 840, 90, ui::darken(ui::color::purple, 0.3f), 5);
-        c.fonts->bold.drawShadow(b, x + 50, y + 38, 48, ui::color::text, "Mods");
-        const game::Mods &m = game.mods;
-        const bool on[] = {m.easy, m.noFail, m.hidden, m.hardRock, m.autoplay};
-        const char *names[] = {"Easy", "No Fail", "Hidden", "Hard Rock", "Auto"};
-        const char *codes[] = {"EZ", "NF", "HD", "HR", "AT"};
-        const uint32_t cols[] = {ui::color::lime, ui::color::lime, ui::color::yellow, ui::color::red, ui::color::blue};
-        const char *desc[] = {"Cercles plus gros, plus lents, plus tolérants", "Impossible d'échouer",
-                              "Les cercles disparaissent avant d'être frappés", "Plus petits, plus rapides, plus stricts",
-                              "Regarder la map se jouer toute seule"};
-        for (int i = 0; i < 5; ++i) {
-            const float ry = 360 + static_cast<float>(i) * 100;
-            const bool sel = i == modCursor_;
-            ui::roundRect(c, kVW / 2 - 400, ry, 800, 88, 20, sel ? gfx::rgba(255, 255, 255, 30) : gfx::rgba(255, 255, 255, 10));
-            ui::skewed(c, kVW / 2 - 380, ry + 16, 100, 56, 10, on[i] ? cols[i] : gfx::rgba(255, 255, 255, 30));
-            c.fonts->bold.draw(b, kVW / 2 - 325, ry + 24, 30, on[i] ? gfx::rgba(20, 20, 30) : ui::color::textDim, codes[i], gfx::Align::Center);
-            c.fonts->bold.draw(b, kVW / 2 - 250, ry + 12, 32, ui::color::text, names[i]);
-            c.fonts->regular.draw(b, kVW / 2 - 250, ry + 50, 22, ui::color::textDim, desc[i]);
-        }
-    }
-
+    std::vector<int> visible_;
+    std::vector<Item> items_;
+    std::unordered_map<uint64_t, PanelAnim> anims_;
+    size_t lastCount_ = 0;
     int set_ = 0, diff_ = 0;
     float scroll_ = 0;
-    double enterTime_ = 0, changeTime_ = 0, wedgeTime_ = 0;
-    bool pending_ = false, modsOpen_ = false;
-    int modCursor_ = 0;
-    std::vector<int> visible_;
-    size_t lastCount_ = 0;
-    std::string query_;
+    double changeTime_ = 0, appearAt_ = 0, boardAt_ = 0;
+    bool pending_ = false;
+    std::string query_, boardKey_;
     bool prevKeys_[256] = {};
-    bool footerHover_[5] = {};
-    std::vector<Hit> hits_;
+    Tween wedgeX_{0}, wedgeA_{0}, screenA_{0}, focus_{0}, footerY_{0};
+    Tween footerBtnY_[4];
+    ButtonFx backFx_, footerFx_[3];
+    bool modsOpen_ = false;
+    bool logoPending_ = false;
+    double logoAt_ = 0;
+    int modCursor_ = 4;
+    Tween modsA_{0}, modColY_[3], modFlash_[kModCount];
 };
 
 }  // namespace

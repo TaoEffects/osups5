@@ -61,8 +61,11 @@ bool init(const InitParams &params) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     // Fenêtre à la moitié de la résolution demandée : le rendu travaille en
     // coordonnées virtuelles et s'adapte à la taille réelle.
-    g_window = SDL_CreateWindow(params.title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, params.width / 2,
-                                params.height / 2, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    // RHYTHM_FULLSIZE=1 : taille réelle (captures d'écran de test).
+    const char *full = getenv("RHYTHM_FULLSIZE");
+    const int div = full && *full == '1' ? 1 : 2;
+    g_window = SDL_CreateWindow(params.title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, params.width / div,
+                                params.height / div, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!g_window) {
         LOG("sdl2: SDL_CreateWindow a echoue: %s", SDL_GetError());
         return false;

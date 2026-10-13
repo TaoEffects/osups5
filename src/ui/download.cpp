@@ -1,36 +1,49 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Téléchargement de maps façon "beatmap listing" de lazer : bandeau bleu, onglets,
-// grille de cartes illustrées. Croix (ou clic) : la map se télécharge et s'installe.
+// Téléchargement de maps, façon BeatmapListingOverlay de lazer : l'overlay
+// arrive en « vagues » colorées depuis le bas, puis l'en-tête, la recherche et la
+// grille de cartes (palette bleue). Croix ou clic : la map se télécharge et
+// s'installe toute seule (même si on ferme l'overlay).
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <set>
 #include <string>
 #include <unordered_map>
 
 #include "app/game.h"
-#include "core/anim.h"
-#include "core/log.h"
 #include "game/library.h"
-#include "ui/theme.h"
+#include "ui/lz.h"
 
 namespace {
 
-constexpr float kCardW = 880, kCardH = 168, kGapX = 40, kGapY = 22, kTop = 300;
-constexpr uint32_t kBlue = gfx::rgba(52, 140, 230);
+using namespace lz;
+
+constexpr int kCols = 3;
+constexpr float kCardW = 430 * U, kCardH = 100 * U, kGap = 10 * U;
+constexpr float kMargin = (kVW - kCols * kCardW - (kCols - 1) * kGap) / 2;
+
+const char *const kTabs[] = {"Populaires", "Récentes", "Favorites"};
 
 class Download : public Screen {
 public:
     using Screen::Screen;
 
     void enter() override {
-        enterTime_ = game.ctx.now;
-        refresh();
+        Context &c = game.ctx;
+        const double t = ms(c);
+        // Vagues : 4 bandes inclinées qui montent l'une après l'autre (800 ms OutSine).
+        for (int i = 0; i < 4; ++i) waves_[i].fromTo(t, 0, 1, 800, Ease::OutSine, i * 50.0);
+        content_.fromTo(t, 0, 1, 800, Ease::OutQuint, 200);
+        c.play(c.sfx->uiOpen, 0.6f);
+        if (!game.mirror.searchBusy()) refresh();
     }
 
-    void leave() override {
+    double leave() override {
+        const double t = ms(game.ctx);
+        content_.go(t, 0, 300, Ease::InSine);
+        for (int i = 0; i < 4; ++i) waves_[i].go(t, 0, 500, Ease::InSine, (3 - i) * 40.0);
         for (auto &kv : covers_) gfx::destroyTexture(kv.second);
         covers_.clear();
+        return 650;
     }
 
     void update(const UiInput &in) override {
@@ -41,30 +54,16 @@ public:
             results_ = std::move(results);
             error_ = error;
             cursor_ = 0;
-            scroll_ = 0;
+            scroll_ = target_ = 0;
+            appear_ = ms(c);
             for (const net::RemoteSet &s : results_)
                 if (!s.coverUrl.empty() && !covers_.count(s.id)) game.mirror.requestCover(s.id, s.coverUrl);
         }
         int coverId = 0;
         gfx::ImageData img;
-        while (game.mirror.takeCover(coverId, img)) covers_[coverId] = gfx::createTexture(img.width, img.height, img.rgba.data(), true);
-
-        // Téléchargements terminés : ajout à la bibliothèque (thread principal).
-        for (const auto &d : game.mirror.downloads()) {
-            if (handled_.count(d.get())) continue;
-            if (d->phase.load() == 3) {
-                handled_.insert(d.get());
-                if (c.library->addFolder(d->folder)) {
-                    c.play(c.sfx->uiDownloaded);
-                    game.toast("Installée : " + d->label);
-                    const int idx = c.library->findSet(d->folder);
-                    if (idx >= 0 && game.selectedSet < 0) game.select(idx, 0, false);
-                }
-            } else if (d->phase.load() == 4) {
-                handled_.insert(d.get());
-                c.play(c.sfx->uiError);
-                game.toast("Échec : " + d->error);
-            }
+        while (game.mirror.takeCover(coverId, img)) {
+            covers_[coverId] = gfx::createTexture(img.width, img.height, img.rgba.data(), true);
+            coverAt_[coverId] = ms(c);
         }
 
         if (in.back) {
@@ -74,12 +73,11 @@ public:
                 return;
             }
             c.play(c.sfx->uiBack);
-            game.goTo(game.makeMainMenu());
+            game.closeOverlay();
             return;
         }
-        // Onglets (souris ou L1/R1).
         for (int i = 0; i < 3; ++i) {
-            if (in.clicked(tabX(i), 196, tabW(i), 52) && tab_ != i) {
+            if (in.clicked(tabX(i), tabsY(), tabW(i), 30 * U) && tab_ != i) {
                 tab_ = i;
                 page_ = 0;
                 c.play(c.sfx->uiHover);
@@ -103,32 +101,38 @@ public:
         const int n = static_cast<int>(results_.size());
         if (n > 0) {
             const int old = cursor_;
-            if (in.right && cursor_ % 2 == 0 && cursor_ + 1 < n) ++cursor_;
-            if (in.left && cursor_ % 2 == 1) --cursor_;
-            if (in.down) cursor_ = std::min(n - 1, cursor_ + 2);
-            if (in.up) cursor_ = std::max(0, cursor_ - 2);
-            if (in.wheel != 0) scroll_ = std::clamp(scroll_ - in.wheel * 120, 0.0f, maxScroll());
+            if (in.right && cursor_ % kCols < kCols - 1 && cursor_ + 1 < n) ++cursor_;
+            if (in.left && cursor_ % kCols > 0) --cursor_;
+            if (in.down) cursor_ = std::min(n - 1, cursor_ + kCols);
+            if (in.up) cursor_ = std::max(0, cursor_ - kCols);
+            if (in.wheel != 0) target_ = std::clamp(target_ - in.wheel * 160, 0.0f, maxScroll());
             bool activate = in.confirm;
             for (int i = 0; i < n; ++i) {
                 float x, y;
                 cardPos(i, x, y);
+                if (y + kCardH < gridTop() || y > kVH) continue;
                 if (in.hover(x, y, kCardW, kCardH) && in.mouseMoved) cursor_ = i;
                 if (in.clicked(x, y, kCardW, kCardH)) {
                     cursor_ = i;
                     activate = true;
                 }
             }
+            for (int i = 0; i < n; ++i) {
+                const bool h = i == cursor_;
+                hoverFx_[results_[static_cast<size_t>(i)].id].setHover(c, h, 100, 500);
+            }
             if (cursor_ != old) {
                 c.play(c.sfx->uiHover, 0.6f);
                 if (!in.mouseActive) {
-                    // Garder la carte choisie visible.
-                    const float row = static_cast<float>(cursor_ / 2) * (kCardH + kGapY);
-                    if (row - scroll_ > 520) scroll_ = row - 520;
-                    if (row < scroll_) scroll_ = row;
+                    const float row = static_cast<float>(cursor_ / kCols) * (kCardH + kGap);
+                    const float visible = kVH - gridTop() - kCardH - 40 * U;
+                    if (row - target_ > visible) target_ = row - visible;
+                    if (row < target_) target_ = row;
                 }
             }
             if (activate) {
                 const net::RemoteSet &s = results_[static_cast<size_t>(cursor_)];
+                hoverFx_[s.id].trigger(c, 0.4f, 1000);
                 if (c.library->hasSetId(s.id)) {
                     game.toast("Déjà installée");
                 } else {
@@ -137,161 +141,224 @@ public:
                 }
             }
         }
-        smooth_ = anim::approach(smooth_, scroll_, c.dt, 0.05f);
+        scroll_ = anim::damp(scroll_, target_, 50, c.dt * 1000);
     }
 
     void render() override {
         Context &c = game.ctx;
         gfx::SpriteBatch &b = *c.batch;
-        game.drawMenuBackground(0.8f);
-        const float in = anim::outQuint(static_cast<float>((c.now - enterTime_) / 0.6));
-        char line[256];
+        const double t = ms(c);
+        static const Palette pal = palette(hue::blue);
+        const float top = game.toolbar.bottom(c);
+        // Vagues.
+        const uint32_t waveCols[4] = {pal.light4, pal.dark1, pal.dark3, pal.dark4};
+        const float rot[4] = {13, -7, 4, -2};
+        for (int i = 0; i < 4; ++i) {
+            const float k = waves_[i].at(t);
+            if (k <= 0.001f) continue;
+            const float h = kVH * 1.6f;
+            const float y = kVH + 60 - k * (kVH - top + 140 + static_cast<float>(i) * 10);
+            b.shape(1, kVW / 2, y + h / 2, kVW * 0.9f, h / 2, 0, 0, 0, gfx::Corners::solid(waveCols[i]), 0, rot[i] * anim::kPi / 180 * (1 - k * 0.6f));
+        }
+        const float k = content_.at(t);
+        if (k <= 0.001f) return;
+        b.pushTransform(0, (1 - k) * 300, 1, k);
+        b.rect(0, top, kVW, kVH - top, pal.background5);
 
-        // Grille.
+        // Grille (sous l'en-tête).
+        b.pushClip(0, gridTop() - 10 * U, kVW, kVH);
         const auto downloads = game.mirror.downloads();
         std::unordered_map<int, const net::DownloadState *> byId;
         for (const auto &d : downloads) byId[d->setId] = d.get();
         for (int i = 0; i < static_cast<int>(results_.size()); ++i) {
             float x, y;
             cardPos(i, x, y);
-            if (y < 170 || y > kVH - 60) continue;
-            renderCard(i, x, y, byId, in);
+            if (y + kCardH < gridTop() - 10 * U || y > kVH) continue;
+            // Apparition en cascade.
+            const float ap = anim::ease(Ease::OutQuint, static_cast<float>(std::clamp((t - appear_ - i * 25.0) / 400.0, 0.0, 1.0)));
+            b.pushTransform(0, (1 - ap) * 30 * U, 1, ap);
+            renderCard(i, x, y, byId);
+            b.popTransform();
         }
+        b.popClip();
         if (game.mirror.searchBusy()) {
-            const float a = static_cast<float>(c.now) * 6;
-            for (int k = 0; k < 8; ++k)
-                b.centered(c.tex->disc, kVW / 2 + std::cos(a + k * 0.785f) * 40, 600 + std::sin(a + k * 0.785f) * 40, 16,
-                           gfx::withAlpha(ui::color::blue, (k + 1) / 8.0f));
+            spinner(c, kVW / 2, gridTop() + 200 * U, 40 * U, 1);
         } else if (!error_.empty()) {
-            c.fonts->bold.drawShadow(b, kVW / 2, 540, 34, ui::color::red, ("Erreur réseau : " + error_).c_str(), gfx::Align::Center);
-            c.fonts->semibold.drawShadow(b, kVW / 2, 590, 26, ui::color::textDim, "Triangle (ou F2) pour réessayer", gfx::Align::Center);
+            text(c, c.fonts->semibold, kVW / 2, gridTop() + 160 * U, 24 * U, col::red1, "Erreur réseau : " + error_, gfx::Align::Center);
+            c.fonts->regular.draw(b, kVW / 2, gridTop() + 200 * U, 18 * U, pal.content2, "Triangle (ou F2) pour réessayer", gfx::Align::Center);
         } else if (results_.empty()) {
-            c.fonts->bold.drawShadow(b, kVW / 2, 560, 34, ui::color::textDim, "Aucun résultat", gfx::Align::Center);
+            c.fonts->semibold.draw(b, kVW / 2, gridTop() + 160 * U, 24 * U, pal.content2, "Aucun résultat", gfx::Align::Center);
         }
 
-        // En-tête, recherche et onglets par-dessus la grille.
-        ui::header(c, "Télécharger des maps", "Depuis le miroir osu.direct · elles s'installent toutes seules", kBlue, in);
-        b.rect(0, 170, kVW, 100, gfx::rgba(18, 18, 30, 240));
-        for (int i = 0; i < 3; ++i) {
-            const char *tabs[] = {"Populaires", "Récentes", "Favorites"};
-            const bool sel = i == tab_;
-            ui::roundRect(c, tabX(i), 196, tabW(i), 52, 26, sel ? kBlue : gfx::rgba(255, 255, 255, 18));
-            c.fonts->bold.draw(b, tabX(i) + tabW(i) / 2, 206, 28, ui::color::text, tabs[i], gfx::Align::Center);
+        // En-tête (OverlayHeader) : titre, onglets ; puis zone de recherche.
+        const float hy = top;
+        b.rect(0, hy, kVW, 70 * U, pal.background4);
+        icon(c, fa::download, kMargin + 20 * U, hy + 35 * U, 26 * U, pal.highlight1);
+        c.fonts->light.draw(b, kMargin + 48 * U, hy + 17 * U, 30 * U, col::white, "télécharger des maps");
+        c.fonts->regular.draw(b, kVW - kMargin, hy + 26 * U, 16 * U, pal.content2, "depuis le miroir osu.direct", gfx::Align::Right);
+        b.rect(0, hy + 70 * U, kVW, 2 * U, pal.highlight1);
+        // Zone de recherche avec la pochette du premier résultat en fond.
+        const float sy = hy + 72 * U, sh = 120 * U;
+        b.rect(0, sy, kVW, sh, pal.background3);
+        if (!results_.empty()) {
+            auto cv = covers_.find(results_[0].id);
+            if (cv != covers_.end()) {
+                const float ta = static_cast<float>(cv->second.width) / static_cast<float>(cv->second.height);
+                const float aspect = kVW / sh;
+                const float cut = (1 - ta / aspect) / 2;
+                b.quad(cv->second, 0, sy, kVW, sh, alpha(col::white, 0.25f), 0, std::max(0.0f, cut), 1, std::min(1.0f, 1 - cut));
+                b.roundRectGradient(0, sy, kVW, sh, 0, gfx::Corners::vertical(alpha(pal.background3, 0.4f), alpha(pal.background3, 0.95f)));
+            }
         }
-        snprintf(line, sizeof(line), "Page %d", page_ + 1);
-        c.fonts->semibold.draw(b, tabX(2) + tabW(2) + 30, 206, 28, ui::color::textDim, line);
-        const float sx = 1080, sw = kVW - sx - 60;
-        ui::roundRect(c, sx, 194, sw, 56, 28, gfx::rgba(0, 0, 0, 120));
-        ui::icon(c, ui::Icon::Search, sx + 34, 222, 26, ui::color::blue);
+        const float bx = kMargin, bw = kVW - kMargin * 2;
+        b.roundRect(bx, sy + 18 * U, bw, 40 * U, 5 * U, alpha(pal.background6, 0.85f));
+        icon(c, fa::magnifying_glass, bx + 22 * U, sy + 38 * U, 16 * U, pal.light2);
         const bool empty = query_.empty();
-        const std::string shown = empty ? "Rechercher (clavier)…" : query_ + "_";
-        c.fonts->semibold.draw(b, sx + 66, 207, 26, empty ? ui::color::textDim : ui::color::text, shown.c_str());
-
-        ui::hintBar(c,
-                    {{ui::PadIcon::Cross, "Télécharger"},
-                     {ui::PadIcon::L1, "/ R1 : onglet"},
-                     {ui::PadIcon::L2, "/ R2 : page"},
-                     {ui::PadIcon::Triangle, "Actualiser"},
-                     {ui::PadIcon::Circle, "Retour"}},
-                    in);
+        const std::string shown = empty ? "rechercher (clavier)..." : query_ + "_";
+        c.fonts->regular.draw(b, bx + 44 * U, sy + 27 * U, 20 * U, empty ? pal.light4 : col::white, shown.c_str());
+        // Onglets de tri.
+        c.fonts->semibold.draw(b, bx, tabsY() + 6 * U, 15 * U, pal.content2, "Tri");
+        for (int i = 0; i < 3; ++i) {
+            const bool sel = i == tab_;
+            const float tx = tabX(i), tw = tabW(i);
+            if (sel) b.roundRect(tx, tabsY(), tw, 30 * U, 15 * U, pal.background1);
+            c.fonts->semibold.draw(b, tx + tw / 2, tabsY() + 6 * U, 16 * U, sel ? col::white : pal.light2, kTabs[i], gfx::Align::Center);
+        }
+        char line[64];
+        snprintf(line, sizeof(line), "page %d", page_ + 1);
+        c.fonts->regular.draw(b, bx + bw, tabsY() + 6 * U, 16 * U, pal.content2, line, gfx::Align::Right);
+        // Aide manette.
+        const float fy = kVH - 30 * U;
+        b.roundRectGradient(0, fy - 30 * U, kVW, 60 * U, 0, gfx::Corners::vertical(alpha(pal.background6, 0), alpha(pal.background6, 0.95f)));
+        float hx = kMargin;
+        auto hint = [&](Pad p, const char *label) {
+            padGlyph(c, p, hx + 10 * U, fy + 8 * U, 20 * U);
+            hx += 26 * U;
+            hx += c.fonts->regular.draw(b, hx, fy, 15 * U, pal.content2, label) + 22 * U;
+        };
+        hint(Pad::Cross, "télécharger");
+        hint(Pad::L1, "");
+        hx -= 18 * U;
+        hint(Pad::R1, "tri");
+        hint(Pad::L2, "");
+        hx -= 18 * U;
+        hint(Pad::R2, "page");
+        hint(Pad::Triangle, "actualiser");
+        hint(Pad::Circle, "fermer");
+        b.popTransform();
     }
 
 private:
-    float tabW(int i) const {
-        const char *tabs[] = {"Populaires", "Récentes", "Favorites"};
-        return game.ctx.fonts->bold.measure(28, tabs[i]) + 60;
-    }
+    float gridTop() const { return game.toolbar.bottom(game.ctx) + 72 * lz::U + 120 * lz::U + 20 * lz::U; }
+    float tabsY() const { return game.toolbar.bottom(game.ctx) + 72 * lz::U + 72 * lz::U; }
+    float tabW(int i) const { return game.ctx.fonts->semibold.measure(16 * U, kTabs[i]) + 30 * U; }
     float tabX(int i) const {
-        float x = 80;
-        for (int k = 0; k < i; ++k) x += tabW(k) + 14;
+        float x = kMargin + 40 * U;
+        for (int k = 0; k < i; ++k) x += tabW(k) + 6 * U;
         return x;
     }
     void cardPos(int i, float &x, float &y) const {
-        x = 60 + static_cast<float>(i % 2) * (kCardW + kGapX);
-        y = kTop + static_cast<float>(i / 2) * (kCardH + kGapY) - smooth_;
+        x = kMargin + static_cast<float>(i % kCols) * (kCardW + kGap);
+        y = gridTop() + static_cast<float>(i / kCols) * (kCardH + kGap) - scroll_;
     }
     float maxScroll() const {
-        const int rows = (static_cast<int>(results_.size()) + 1) / 2;
-        return std::max(0.0f, static_cast<float>(rows) * (kCardH + kGapY) - 600);
+        const int rows = (static_cast<int>(results_.size()) + kCols - 1) / kCols;
+        return std::max(0.0f, static_cast<float>(rows) * (kCardH + kGap) - (kVH - gridTop() - 40 * U));
     }
 
-    void renderCard(int i, float x, float y, const std::unordered_map<int, const net::DownloadState *> &byId, float in) {
+    // Carte façon BeatmapCardNormal : vignette carrée, pochette en fond, infos,
+    // pastilles de difficulté et zone de téléchargement à droite.
+    void renderCard(int i, float x, float y, const std::unordered_map<int, const net::DownloadState *> &byId) {
         Context &c = game.ctx;
         gfx::SpriteBatch &b = *c.batch;
+        static const Palette pal = palette(hue::blue);
+        const double t = ms(c);
         const net::RemoteSet &s = results_[static_cast<size_t>(i)];
-        const bool sel = i == cursor_;
-        char line[256];
-        x += (1 - in) * 300;
-        ui::roundRect(c, x - 3, y - 3, kCardW + 6, kCardH + 6, 20, sel ? ui::color::blue : gfx::rgba(255, 255, 255, 25));
-        ui::roundRect(c, x, y, kCardW, kCardH, 18, gfx::rgba(26, 24, 38));
-        auto cover = covers_.find(s.id);
-        if (cover != covers_.end()) {
-            const float ta = static_cast<float>(cover->second.width) / static_cast<float>(cover->second.height);
-            const float aspect = (kCardW - 8) / (kCardH - 8);
-            float v0 = 0, v1 = 1, u0 = 0, u1 = 1;
-            if (ta < aspect) {
-                const float cut = (1 - ta / aspect) / 2;
-                v0 = cut;
-                v1 = 1 - cut;
-            } else {
-                const float cut = (1 - aspect / ta) / 2;
-                u0 = cut;
-                u1 = 1 - cut;
-            }
-            b.quad(cover->second, x + 4, y + 4, kCardW - 8, kCardH - 8, gfx::rgba(255, 255, 255, sel ? 255 : 190), u0, v0, u1, v1);
-        }
-        for (int k = 0; k < 12; ++k)
-            b.rect(x + 4 + static_cast<float>(k) * 56, y + 4, 56, kCardH - 8, gfx::rgba(0, 0, 0, static_cast<uint8_t>(190 - k * 14)));
-        const std::string title = c.fonts->bold.ellipsize(34, s.title, kCardW - 220);
-        c.fonts->bold.drawShadow(b, x + 28, y + 16, 34, ui::color::text, title.c_str());
-        snprintf(line, sizeof(line), "%s", s.artist.c_str());
-        const std::string artist = c.fonts->semibold.ellipsize(26, line, kCardW - 220);
-        c.fonts->semibold.drawShadow(b, x + 30, y + 58, 26, gfx::rgba(235, 230, 245), artist.c_str());
-        snprintf(line, sizeof(line), "mappée par %s", s.creator.c_str());
-        c.fonts->regular.drawShadow(b, x + 30, y + 92, 22, ui::color::textDim, line);
-        // Statut et difficultés.
-        const bool ranked = s.status == "ranked" || s.status == "approved";
-        const uint32_t statusCol = ranked ? ui::color::lime : (s.status == "loved" ? ui::color::pink : ui::color::yellow);
-        const char *status = ranked ? "CLASSÉE" : (s.status == "loved" ? "AIMÉE" : "AUTRE");
-        ui::roundRect(c, x + 28, y + 126, 120, 30, 15, statusCol);
-        c.fonts->bold.draw(b, x + 88, y + 129, 20, gfx::rgba(20, 20, 30), status, gfx::Align::Center);
-        for (size_t d = 0; d < s.diffs.size() && d < 18; ++d) {
-            const float dx = x + 174 + static_cast<float>(d) * 24;
-            b.centered(c.tex->disc, dx, y + 141, 20, gfx::rgba(0, 0, 0, 160));
-            b.centered(c.tex->ringThick, dx, y + 141, 18, ui::starColor(s.diffs[d].stars));
-        }
-        // Zone d'action à droite (comme le bouton de téléchargement des cartes lazer).
-        const float ax = x + kCardW - 150;
+        ButtonFx &fx = hoverFx_[s.id];
+        const float hv = fx.hover.at(t);
+        const float r = 10 * U;
         auto it = byId.find(s.id);
         const bool installed = c.library->hasSetId(s.id) || (it != byId.end() && it->second->phase.load() == 3);
-        ui::roundRect(c, ax, y + 4, 146, kCardH - 8, 16,
-                      installed ? gfx::rgba(60, 140, 70, 230) : (sel ? gfx::rgba(52, 140, 230, 230) : gfx::rgba(0, 0, 0, 150)));
-        if (installed) {
-            c.fonts->bold.draw(b, ax + 73, y + 64, 28, ui::color::text, "✓", gfx::Align::Center);
-            c.fonts->semibold.draw(b, ax + 73, y + 100, 20, ui::color::text, "Installée", gfx::Align::Center);
-        } else if (it != byId.end() && it->second->phase.load() == 4) {
-            c.fonts->bold.draw(b, ax + 73, y + 70, 24, ui::color::red, "Échec", gfx::Align::Center);
-        } else if (it != byId.end()) {
-            const net::DownloadState *d = it->second;
-            const int phase = d->phase.load();
-            const double total = static_cast<double>(d->total.load()), got = static_cast<double>(d->received.load());
-            const float frac = phase == 2 ? 1.0f : (total > 0 ? static_cast<float>(got / total) : 0.0f);
-            // Anneau de progression.
-            const int dots = 60;
-            for (int k = 0; k < dots; ++k) {
-                const float f = static_cast<float>(k) / dots, a = -1.5708f + f * 6.2831853f;
-                b.centered(c.tex->disc, ax + 73 + std::cos(a) * 40, y + 70 + std::sin(a) * 40, 9,
-                           f < frac ? ui::color::blue : gfx::rgba(255, 255, 255, 40));
+        const bool busy = !installed && it != byId.end() && it->second->phase.load() < 3;
+        // La zone d'action s'élargit au survol (comme les cartes lazer).
+        const float actionW = (30 + 30 * hv) * U;
+        b.shadow(x, y + 2 * U, kCardW, kCardH, r, 6 * U, alpha(col::black, 0.25f + 0.15f * hv));
+        b.roundRect(x, y, kCardW, kCardH, r, installed ? col::green3 : busy ? pal.highlight1 : pal.background1);
+        const float cw = kCardW - actionW;
+        auto cover = covers_.find(s.id);
+        const float ca = cover != covers_.end() ? std::min(1.0f, static_cast<float>((t - coverAt_[s.id]) / 400.0)) : 0;
+        b.roundRect(x, y, cw, kCardH, r, pal.background3);
+        if (cover != covers_.end()) {
+            // Pochette en fond (assombrie), et vignette carrée à gauche.
+            const gfx::Texture &tex = cover->second;
+            const float ta = static_cast<float>(tex.width) / static_cast<float>(tex.height);
+            const float aspect = cw / kCardH;
+            float v0 = 0, v1 = 1, u0 = 0, u1 = 1;
+            if (ta < aspect) {
+                v0 = (1 - ta / aspect) / 2;
+                v1 = 1 - v0;
+            } else {
+                u0 = (1 - aspect / ta) / 2;
+                u1 = 1 - u0;
             }
-            snprintf(line, sizeof(line), "%.0f%%", frac * 100);
-            c.fonts->bold.draw(b, ax + 73, y + 56, 24, ui::color::text, phase == 2 ? "…" : line, gfx::Align::Center);
-            c.fonts->regular.draw(b, ax + 73, y + 124, 18, ui::color::textDim, phase == 0 ? "En attente" : (phase == 2 ? "Installation" : "Téléchargement"),
-                                  gfx::Align::Center);
+            b.roundRectTex(tex, x, y, cw, kCardH, r, alpha(col::white, ca * (0.35f + 0.15f * hv)), u0, v0, u1, v1);
+            const float su0 = (1 - kCardH / (kCardH * ta)) / 2;
+            b.roundRectTex(tex, x, y, kCardH, kCardH, r, alpha(col::white, ca), su0, 0, 1 - su0, 1);
         } else {
-            ui::icon(c, ui::Icon::Download, ax + 73, y + 66, 44, ui::color::text);
-            snprintf(line, sizeof(line), "%s", ui::formatTime(s.lengthSec * 1000.0).c_str());
-            c.fonts->semibold.draw(b, ax + 73, y + 112, 20, ui::color::textDim, line, gfx::Align::Center);
+            b.roundRect(x, y, kCardH, kCardH, r, pal.background4);
+            icon(c, fa::image, x + kCardH / 2, y + kCardH / 2, 26 * U, pal.background1);
         }
+        b.roundRectGradient(x + kCardH - r, y, cw - kCardH + r, kCardH, 0,
+                            gfx::Corners::horizontal(alpha(pal.background3, 0.85f), alpha(pal.background3, 0.5f)));
+        const float fl = fx.flash.at(t);
+        if (fl > 0) b.roundRect(x, y, kCardW, kCardH, r, alpha(col::white, fl));
+        // Textes.
+        const float tx = x + kCardH + 10 * U, tw = cw - kCardH - 20 * U;
+        text(c, c.fonts->semibold, tx, y + 7 * U, 18 * U, col::white, s.title, gfx::Align::Left, tw);
+        text(c, c.fonts->semibold, tx, y + 29 * U, 14 * U, pal.content2, "de " + s.artist, gfx::Align::Left, tw);
+        text(c, c.fonts->regular, tx, y + 47 * U, 13 * U, pal.light2, "mappée par " + s.creator, gfx::Align::Left, tw);
+        // Statut + pastilles de difficulté.
+        const bool ranked = s.status == "ranked" || s.status == "approved";
+        const uint32_t statusCol = ranked ? hex(0xb3ff66) : s.status == "loved" ? hex(0xff66ab) : hex(0xffd966);
+        const char *status = ranked ? "CLASSÉE" : s.status == "loved" ? "AIMÉE" : "AUTRE";
+        const float py = y + kCardH - 24 * U;
+        const float sw = c.fonts->bold.measure(11 * U, status) + 12 * U;
+        b.roundRect(tx, py, sw, 15 * U, 7.5f * U, statusCol);
+        c.fonts->bold.draw(b, tx + sw / 2, py + 1.5f * U, 11 * U, alpha(col::black, 0.75f), status, gfx::Align::Center);
+        float dx = tx + sw + 8 * U;
+        for (size_t d = 0; d < s.diffs.size() && d < 14; ++d) {
+            b.roundRect(dx, py + 1.5f * U, 7 * U, 12 * U, 3.5f * U, starColor(s.diffs[d].stars));
+            dx += 8 * U;
+        }
+        // Zone d'action.
+        const float ax = x + cw, acx = ax + actionW / 2;
+        if (installed) {
+            icon(c, fa::check, acx, y + kCardH / 2, 16 * U, col::white);
+        } else if (it != byId.end() && it->second->phase.load() == 4) {
+            icon(c, fa::xmark, acx, y + kCardH / 2, 16 * U, col::red1);
+        } else if (busy) {
+            const net::DownloadState *d = it->second;
+            const double total = static_cast<double>(d->total.load()), got = static_cast<double>(d->received.load());
+            const float frac = d->phase.load() == 2 ? 1.0f : (total > 0 ? static_cast<float>(got / total) : 0.0f);
+            spinner(c, acx, y + kCardH / 2 - 8 * U, 16 * U, 1);
+            char line[16];
+            snprintf(line, sizeof(line), "%.0f%%", frac * 100);
+            c.fonts->bold.draw(b, acx, y + kCardH / 2 + 8 * U, 11 * U, col::black, line, gfx::Align::Center);
+            // Barre de progression sous la carte.
+            b.roundRect(x + r, y + kCardH - 3 * U, (cw - r) * frac, 3 * U, 1.5f * U, pal.highlight1);
+        } else {
+            icon(c, fa::download, acx, y + kCardH / 2 - (hv > 0.5f ? 8 * U : 0), 16 * U, col::white);
+            if (hv > 0.5f)
+                c.fonts->semibold.draw(b, acx, y + kCardH / 2 + 6 * U, 11 * U, alpha(col::white, (hv - 0.5f) * 2),
+                                       formatLength(s.lengthSec).c_str(), gfx::Align::Center);
+        }
+        if (i == cursor_ && !game.input().mouseActive) b.roundRectBorder(x - 2, y - 2, kCardW + 4, kCardH + 4, r + 2, 3, col::white);
+    }
+
+    static std::string formatLength(int sec) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%d:%02d", sec / 60, sec % 60);
+        return buf;
     }
 
     void refresh() {
@@ -337,10 +404,12 @@ private:
     std::vector<net::RemoteSet> results_;
     std::string error_, query_;
     std::unordered_map<int, gfx::Texture> covers_;
-    std::set<const net::DownloadState *> handled_;
+    std::unordered_map<int, double> coverAt_;
+    std::unordered_map<int, ButtonFx> hoverFx_;
     int tab_ = 0, page_ = 0, cursor_ = 0;
-    float scroll_ = 0, smooth_ = 0;
-    double enterTime_ = 0, lastType_ = 0;
+    float scroll_ = 0, target_ = 0;
+    double lastType_ = 0, appear_ = 0;
+    Tween waves_[4], content_{0};
     bool prevKeys_[256] = {};
     bool searchPending_ = false;
 };

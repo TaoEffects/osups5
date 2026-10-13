@@ -1,231 +1,412 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Écran d'accueil façon lazer : logo rose qui bat au rythme de la musique, entouré
-// d'un visualiseur ; une pression l'envoie à gauche et déplie la barre de boutons.
+// Menu principal, sur le modèle du ButtonSystem de lazer :
+//  - état « initial » : le logo seul, au centre, qui bat au rythme ;
+//  - état « haut niveau » : le logo réduit (0,5) glisse à gauche, la bande de
+//    boutons inclinés se déplie (500 ms OutExpo, 150 ms après le logo) ;
+//  - « jouer » : les boutons se replient, tout glisse à gauche et le logo part
+//    rejoindre le pied de page de la sélection de map.
+// Dimensions et durées reprises du code de lazer (en unités u).
 #include <cmath>
 #include <cstdio>
-#include <ctime>
+#include <cstring>
 #include <string>
 
 #include "app/game.h"
-#include "core/anim.h"
 #include "game/library.h"
-#include "ui/theme.h"
-#include "version.h"
+#include "ui/lz.h"
 
 namespace {
 
-struct Button {
+using namespace lz;
+
+enum class State { Initial, TopLevel, Entering, Exit };
+
+struct MenuButton {
     const char *label;
-    ui::Icon icon;
+    const char *glyph;
     uint32_t color;
+    bool left;  // à gauche du logo (Options)
+    ButtonFx fx;
+    Tween width{0}, contentAlpha{0};
+    Tween iconY{0}, iconScale{1};
+    long lastBeat = -1;
+    int beatSide = 1;
 };
 
-const Button kButtons[] = {
-    {"Jouer", ui::Icon::Play, ui::color::purple},
-    {"Télécharger", ui::Icon::Download, gfx::rgba(52, 160, 230)},
-    {"Options", ui::Icon::Settings, gfx::rgba(255, 170, 30)},
-    {"Quitter", ui::Icon::Exit, gfx::rgba(235, 74, 74)},
+constexpr float kBtnW = 140 * U, kBtnH = 100 * U, kWedge = 20 * U;
+// Centre du logo en état haut niveau : 228 u à gauche du centre de l'écran.
+constexpr float kLogoX = kVW / 2 - 228 * U;
+
+const char *const kTips[] = {
+    "Carré (ou F1) ouvre les mods dans la sélection de map.",
+    "Triangle (ou F2) choisit une map au hasard.",
+    "Le pavé tactile peut servir à viser : essaie-le en mode absolu dans les options.",
+    "Le mod DT accélère la musique sans changer sa hauteur.",
+    "Les maps se téléchargent directement depuis l'écran « Télécharger ».",
+    "Après une partie, le jeu peut corriger ton décalage audio tout seul.",
+    "Clique sur le logo pour lancer la sélection de map.",
+    "Le 120 Hz s'active dans les options (relance nécessaire).",
 };
-constexpr int kCount = 4;
-constexpr float kBarH = 120;
 
 class MainMenu : public Screen {
 public:
     using Screen::Screen;
 
     void enter() override {
-        enterTime_ = game.ctx.now;
-        if (!game.ctx.music->playing()) game.playPreview();
+        Context &c = game.ctx;
+        const double t = ms(c);
+        buttons_[0] = {"Options", fa::gear, hex(0x555555), true, {}, {}, {}, {}, {1}, -1, 1};
+        buttons_[1] = {"Jouer", fa::play, hex(0x6644cc), false, {}, {}, {}, {}, {1}, -1, 1};
+        buttons_[2] = {"Télécharger", fa::download, hex(0xa5cc00), false, {}, {}, {}, {}, {1}, -1, 1};
+        buttons_[3] = {"Quitter", fa::door_open, hex(0xee3399), false, {}, {}, {}, {}, {1}, -1, 1};
+        game.logo.interactive = true;
+        game.backgroundParallax = 1;
+        screenAlpha_.fromTo(t, forward ? 0 : 1, 1, forward ? 500 : 300, Ease::OutQuint);
+        if (game.introFlash) {
+            game.introFlash = false;
+            flash_.fromTo(t, 1, 0, 1000, Ease::Out);
+        }
+        tipStart_ = t;
+        tip_ = static_cast<int>(static_cast<unsigned>(t) % (sizeof(kTips) / sizeof(kTips[0])));
+        if (!forward) {
+            // Retour depuis la sélection de map : directement en haut niveau.
+            setState(State::TopLevel, true);
+            slide_.fromTo(t, -800 * U, 0, 300, Ease::OutQuint);
+            game.logo.opacity.go(t, 1, 300, Ease::OutQuint);
+        } else {
+            setState(State::Initial, true);
+        }
+        if (!c.music->playing() && !c.library->scanning()) game.playPreview();
+    }
+
+    double leave() override {
+        const double t = ms(game.ctx);
+        screenAlpha_.go(t, 0, 400, Ease::OutQuint);
+        return 400;
     }
 
     void update(const UiInput &in) override {
         Context &c = game.ctx;
+        const double t = ms(c);
         if (!previewStarted_ && !c.library->scanning()) {
             previewStarted_ = true;
             if (!c.music->playing()) game.playPreview();
         }
-        const float logoX = open_ ? 470.0f : kVW / 2, logoY = kVH / 2;
-        const bool overLogo = in.mouseActive && std::hypot(in.mouseX - logoX, in.mouseY - logoY) < 230;
-
-        if (!open_) {
-            if (in.confirm || (in.anyKey && !in.back) || (in.mouseClick && overLogo) || in.right || in.down) {
-                open_ = true;
-                openTime_ = c.now;
-                c.play(c.sfx->uiOpen);
-            }
-        } else {
-            // Boutons : souris (survol/clic), croix directionnelle ou flèches.
-            for (int i = 0; i < kCount; ++i) {
-                const ButtonRect r = rect(i);
-                if (in.mouseActive && in.hover(r.x, r.y, r.w, r.h) && selected_ != i) {
-                    selected_ = i;
-                    c.play(c.sfx->uiHover, 0.7f);
-                }
-                if (in.clicked(r.x, r.y, r.w, r.h)) activate(i);
-            }
-            if (in.left || in.up) {
-                selected_ = (selected_ + kCount - 1) % kCount;
-                c.play(c.sfx->uiHover, 0.8f);
-            }
-            if (in.right || in.down) {
-                selected_ = (selected_ + 1) % kCount;
-                c.play(c.sfx->uiHover, 0.8f);
-            }
-            if (in.confirm) activate(selected_);
-            if (in.mouseClick && overLogo) activate(0);  // le logo lance "Jouer", comme dans lazer
-            if (in.back) {
-                open_ = false;
-                openTime_ = c.now;
-                c.play(c.sfx->uiBack);
-            }
+        updateTicker();
+        flashes_.update(c);
+        if (state_ == State::Entering || state_ == State::Exit) {
+            if (state_ == State::Exit && t >= exitAt_) game.requestExit();
+            return;
         }
-        if (in.options) game.goTo(game.makeOptions());
-        for (int i = 0; i < kCount; ++i) hover_[i] = anim::approach(hover_[i], i == selected_ && open_ ? 1.0f : 0.0f, c.dt, 0.04f);
-        openAnim_ = anim::approach(openAnim_, open_ ? 1.0f : 0.0f, c.dt, 0.07f);
-        const float level = c.music->playing() ? c.music->level() : 0;
-        loud_ = anim::approach(loud_, level, c.dt, level > loud_ ? 0.02f : 0.15f);
-        logoHover_ = anim::approach(logoHover_, overLogo ? 1.0f : 0.0f, c.dt, 0.05f);
-        if (c.beatIndex != lastBeat_) {
-            lastBeat_ = c.beatIndex;
-            ripples_[rippleNext_++ % 4] = c.now;
+        Logo &logo = game.logo;
+        if (state_ == State::Initial) {
+            if (logo.clicked() || in.confirm || in.right || in.down || (in.anyKey && !in.back)) {
+                c.play(c.sfx->uiOpen);
+                setState(State::TopLevel, false);
+            }
+            return;
+        }
+        // Haut niveau : survol souris ou sélection à la manette / au clavier.
+        int hovered = -1;
+        for (int i = 0; i < 4; ++i) {
+            const Rect r = rect(i);
+            if (in.mouseActive && in.hover(r.x - kShear * kBtnH * 0.5f, r.y, r.w, r.h)) hovered = i;
+        }
+        if (in.mouseActive && in.mouseMoved) selected_ = hovered;
+        if (in.left || in.right || in.up || in.down) {
+            // Ordre visuel : Options | logo | Jouer, Télécharger, Quitter.
+            static const int order[4] = {0, 1, 2, 3};
+            int pos = selected_ < 0 ? 1 : selected_;
+            if (in.left || in.up) pos = std::max(0, pos - 1);
+            if (in.right || in.down) pos = std::min(3, pos + 1);
+            if (selected_ < 0) pos = 1;
+            selected_ = order[pos];
+            c.play(c.sfx->uiHover, 0.8f);
+        }
+        for (int i = 0; i < 4; ++i) {
+            MenuButton &b = buttons_[i];
+            const bool h = selected_ == i;
+            if (h != b.fx.hovered) {
+                b.fx.hovered = h;
+                b.width.go(t, h ? 1.5f : 1.0f, 500, Ease::OutElastic);
+                if (!h) {
+                    b.iconY.go(t, 0, 500, Ease::Out);
+                    b.iconScale.go(t, 1, 200, Ease::Out);
+                } else {
+                    c.play(c.sfx->uiHover, 0.6f);
+                }
+            }
+            // Au rythme, l'icône survolée sautille.
+            if (h && c.trackRunning && c.beatIndexEarly != b.lastBeat) {
+                b.lastBeat = c.beatIndexEarly;
+                const double d = c.beatLength / 2;
+                b.beatSide = -b.beatSide;
+                b.iconY.fromTo(t, 0, -10 * U, d, Ease::Out);
+                b.iconY.go(t, 0, d, Ease::In, d);
+                b.iconScale.fromTo(t, 1.08f, 1.2f, d, Ease::Out);
+                b.iconScale.go(t, 1.08f, d, Ease::In, d);
+            }
+            b.fx.setPressed(c, h && in.raw && (in.raw->mouse.buttons & 1u));
+        }
+        if (in.mouseClick && hovered >= 0) activate(hovered);
+        else if (in.confirm && selected_ >= 0) activate(selected_);
+        else if (in.confirm || logo.clicked()) activate(1);  // le logo lance « Jouer », comme dans lazer
+        if (in.options) activate(0);
+        if (in.back) {
+            c.play(c.sfx->uiBack);
+            setState(State::Initial, false);
         }
     }
 
     void render() override {
         Context &c = game.ctx;
         gfx::SpriteBatch &b = *c.batch;
-        const float t = static_cast<float>(c.now);
+        const double t = ms(c);
+        const float a = screenAlpha_.at(t);
+        b.pushAlpha(a);
+        flashes_.draw(c);
+        // Bande des boutons (fond #323232 sur toute la largeur, 100 u de haut).
+        const float strip = stripAlpha_.at(t);
+        const float sy = stripScaleY_.at(t);
+        if (strip > 0.001f)
+            b.rect(0, kVH / 2 - kBtnH / 2 * sy, kVW, kBtnH * sy, alpha(hex(0x323232), strip));
+        // Parallaxe des boutons (0,01).
         const UiInput &in = game.input();
-        const float px = in.mouseActive ? (in.mouseX / kVW - 0.5f) : std::sin(t * 0.2f) * 0.3f;
-        const float py = in.mouseActive ? (in.mouseY / kVH - 0.5f) : std::cos(t * 0.17f) * 0.3f;
-        game.drawMenuBackground(0.35f, -px, -py);
-        const float appear = anim::outQuint(static_cast<float>((c.now - enterTime_) / 0.9));
-
-        // Flashs latéraux : forts sur le premier temps de la mesure, légers sinon.
-        const bool downbeat = c.beatIndex % 4 == 0;
-        ui::sideFlashes(c, c.beatPulse * (downbeat ? 0.9f : 0.35f) * appear, downbeat ? ui::color::pink : ui::color::text);
-
-        // --- Barre de boutons ----------------------------------------------------------
-        const float o = anim::outQuint(openAnim_);
-        if (o > 0.01f) {
-            const float barY = kVH / 2 - kBarH / 2;
-            b.rect(0, barY, kVW, kBarH, gfx::withAlpha(gfx::rgba(20, 18, 26), 0.85f * o));
-            for (int i = 0; i < kCount; ++i) {
-                const ButtonRect r = rect(i);
-                const float h = hover_[i];
-                const float stagger = anim::outQuint(std::fmax(0.0f, (static_cast<float>(c.now - openTime_) - 0.05f * i) / 0.5f));
-                const float k = open_ ? stagger * o : o;
-                const float bx = r.x - (1 - k) * 300;
-                const uint32_t col = kButtons[i].color;
-                const float pulse = h * c.beatPulse * 6;
-                ui::skewed(c, bx, r.y - h * 14 - pulse, r.w, r.h + h * 28 + pulse * 2, 22,
-                           gfx::withAlpha(h > 0.5f ? ui::lighten(col, 0.1f) : col, k));
-                if (h > 0.01f)
-                    ui::trianglePanel(c, bx + 24, r.y - h * 14 + 6, r.w - 30, r.h + h * 28 - 12, col, 10 + i, h * k * 0.6f);
-                ui::icon(c, kButtons[i].icon, bx + r.w / 2 + 11, r.y + r.h / 2 - 16 - h * 6, 40 + h * 10,
-                         gfx::withAlpha(ui::color::text, k));
-                c.fonts->bold.drawShadow(b, bx + r.w / 2 + 11, r.y + r.h / 2 + 14 + h * 4, 26 + h * 4, gfx::withAlpha(ui::color::text, k),
-                                         kButtons[i].label, gfx::Align::Center);
-            }
+        const float px = in.mouseActive ? -(in.mouseX - kVW / 2) * 0.01f : 0;
+        const float py = in.mouseActive ? -(in.mouseY - kVH / 2) * 0.01f : 0;
+        b.pushTransform(slide_.at(t) + px, py);
+        // Les boutons de gauche sont dessinés au-dessus de ceux de droite (ordre inverse).
+        for (int i = 3; i >= 0; --i) drawButton(i);
+        b.popTransform();
+        // Logo suit la « façade » de la bande.
+        trackLogo();
+        drawTicker();
+        drawTip();
+        b.popTransform();
+        const float fl = flash_.at(t);
+        if (fl > 0.001f) {
+            b.setBlend(gfx::Blend::Additive);
+            b.rect(0, 0, kVW, kVH, alpha(col::white, fl));
+            b.setBlend(gfx::Blend::Alpha);
         }
-
-        // --- Logo ------------------------------------------------------------------------
-        const float logoX = anim::lerp(kVW / 2, 470.0f, o), logoY = kVH / 2;
-        const float base = anim::lerp(1.0f, 0.78f, o);
-        const float beat = 1.0f + 0.035f * c.beatPulse + std::fmin(0.05f, loud_ * 0.15f) + logoHover_ * 0.04f;
-        const float R = 230 * base * beat * (0.6f + 0.4f * appear);
-        ui::visualiser(c, logoX, logoY, R * 0.98f, appear);
-        // Ondes qui partent du logo à chaque temps.
-        for (double rt : ripples_) {
-            const float k = static_cast<float>((c.now - rt) / 0.8);
-            if (k < 0 || k > 1) continue;
-            b.centered(c.tex->ring, logoX, logoY, R * 2 * (1 + k * 0.35f), gfx::withAlpha(ui::color::text, (1 - k) * 0.35f * appear));
+        if (state_ == State::Exit) {
+            const float k = static_cast<float>(std::min(1.0, (t - (exitAt_ - 1200)) / 1200.0));
+            b.rect(0, 0, kVW, kVH, alpha(col::black, std::max(0.0f, k)));
         }
-        b.setBlend(gfx::Blend::Additive);
-        b.centered(c.tex->glow, logoX, logoY, R * 3.0f, gfx::withAlpha(ui::color::pink, (0.25f + 0.2f * c.beatPulse) * appear));
-        b.setBlend(gfx::Blend::Alpha);
-        b.centered(c.tex->disc, logoX, logoY, R * 2.0f, gfx::withAlpha(ui::color::text, appear));
-        b.centered(c.tex->disc, logoX, logoY, R * 1.86f, gfx::withAlpha(ui::color::pinkDark, appear));
-        b.centered(c.tex->disc, logoX, logoY, R * 1.8f, gfx::withAlpha(ui::color::pink, appear));
-        // Triangles qui défilent dans le logo (approximativement à l'intérieur du disque).
-        for (int i = 0; i < 26; ++i) {
-            const float seed = static_cast<float>(i) * 12.9898f;
-            const float fx = std::fmod(std::sin(seed) * 43758.5f, 1.0f);
-            const float sz = (0.25f + std::fabs(std::fmod(std::sin(seed * 2.1f) * 9341.3f, 0.45f))) * R;
-            float fy = std::fmod(std::fabs(std::sin(seed * 3.7f)) * 2.0f - t * 0.08f * (1 + i % 3), 2.0f);
-            if (fy < 0) fy += 2.0f;
-            const float tx = logoX + fx * R * 0.7f, ty = logoY + (fy - 1.0f) * R;
-            const float d = std::hypot(tx - logoX, ty + sz * 0.4f - logoY) + sz * 0.55f;
-            if (d > R * 0.9f) continue;
-            const uint32_t sh = i % 2 ? ui::lighten(ui::color::pink, 0.15f) : ui::darken(ui::color::pink, 0.12f);
-            b.quad(c.tex->triangle, tx - sz / 2, ty, sz, sz * 0.87f, gfx::withAlpha(sh, appear * anim::clamp01((R * 0.9f - d) / 40)));
-        }
-        c.fonts->bold.drawShadow(b, logoX, logoY - R * 0.27f, R * 0.46f, gfx::withAlpha(ui::color::text, appear), "rhythm!",
-                                 gfx::Align::Center);
-
-        // --- Barre du haut (heure, musique), façon barre d'outils de lazer ---------------
-        b.rect(0, 0, kVW, 64, gfx::withAlpha(gfx::rgba(20, 18, 26), 0.75f * appear));
-        c.fonts->bold.draw(b, 30, 14, 32, gfx::withAlpha(ui::color::pink, appear), "rhythm-ps5");
-        char line[300];
-        const time_t now = time(nullptr);
-        const tm *lt = localtime(&now);
-        if (lt) {
-            strftime(line, sizeof(line), "%H:%M", lt);
-            ui::icon(c, ui::Icon::Clock, kVW - 140, 32, 26, gfx::withAlpha(ui::color::text, appear));
-            c.fonts->semibold.draw(b, kVW - 115, 16, 28, gfx::withAlpha(ui::color::text, appear), line);
-        }
-        if (const game::SetInfo *s = game.currentSet()) {
-            snprintf(line, sizeof(line), "%s - %s", s->artist.c_str(), s->title.c_str());
-            const std::string np = c.fonts->semibold.ellipsize(26, line, 900);
-            const float w = c.fonts->semibold.measure(26, np.c_str());
-            ui::icon(c, ui::Icon::Music, kVW - 220 - w, 32, 26, gfx::withAlpha(ui::color::pink, appear));
-            c.fonts->semibold.draw(b, kVW - 190, 17, 26, gfx::withAlpha(ui::color::text, appear), np.c_str(), gfx::Align::Right);
-        }
-        if (c.library->scanning())
-            snprintf(line, sizeof(line), "Lecture de la bibliothèque… %.0f%%", c.library->scanProgress() * 100);
-        else
-            snprintf(line, sizeof(line), "%zu maps installées", c.library->sets().size());
-        c.fonts->semibold.draw(b, 330, 18, 26, gfx::withAlpha(ui::color::textDim, appear), line);
-
-        if (!open_) {
-            const float blink = 0.55f + 0.45f * std::sin(t * 3);
-            c.fonts->semibold.drawShadow(b, kVW / 2, kVH - 150, 30, gfx::withAlpha(ui::color::text, blink * appear * (1 - o)),
-                                         "Appuie sur Croix (ou clique sur le logo)", gfx::Align::Center);
-        }
-        c.fonts->regular.drawShadow(b, 30, kVH - 40, 20, gfx::withAlpha(ui::color::textDim, 0.7f * appear),
-                                    RHYTHM_APP_NAME " " RHYTHM_VERSION " · projet libre et non officiel");
     }
 
 private:
-    struct ButtonRect {
+    struct Rect {
         float x, y, w, h;
     };
-    ButtonRect rect(int i) const {
-        const float w = 250, gap = 6;
-        return {720 + static_cast<float>(i) * (w + gap), kVH / 2 - kBarH / 2, w, kBarH};
+
+    float facadeW() const { return 189.4f * U * game.logo.hoverScale.at(ms(game.ctx)); }
+
+    Rect rect(int i) const {
+        const double t = ms(game.ctx);
+        const float fw = facadeW();
+        const float y = kVH / 2 - kBtnH / 2;
+        if (i == 0) {
+            const MenuButton &b = buttons_[0];
+            const float w = (kBtnW + kWedge) * b.width.at(t);
+            const float right = kLogoX - fw / 2 + kWedge;
+            return {right - w, y, w, kBtnH};
+        }
+        float x = kLogoX + fw / 2 - kWedge;
+        for (int k = 1; k < i; ++k) x += (k == 1 ? kBtnW + kWedge : kBtnW) * buttons_[k].width.at(t) - kWedge;
+        const float w = (i == 1 ? kBtnW + kWedge : kBtnW) * buttons_[i].width.at(t);
+        return {x, y, w, kBtnH};
+    }
+
+    void drawButton(int i) {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double t = ms(c);
+        MenuButton &m = buttons_[i];
+        const Rect r = rect(i);
+        if (r.w < 1) return;
+        // Le contenu n'apparaît qu'au-delà de la moitié de la largeur.
+        const float base = (i <= 1 ? kBtnW + kWedge : kBtnW);
+        const float rel = r.w / base;
+        const float ca = anim::clamp01((rel - 0.5f) / 0.3f) * m.contentAlpha.at(t);
+        if (m.contentAlpha.at(t) <= 0.001f) return;
+        b.pushAlpha(m.contentAlpha.at(t));
+        b.shadow(r.x, r.y, r.w, r.h, 5 * U, 8 * U, gfx::rgba(0, 0, 0, 51), kShear);
+        b.roundRect(r.x, r.y, r.w, r.h, 0, m.color, kShear);
+        const float pr = m.fx.press.at(t) * 0.1f, fl = m.fx.flash.at(t);
+        if (pr > 0 || fl > 0) {
+            b.setBlend(gfx::Blend::Additive);
+            b.roundRect(r.x, r.y, r.w, r.h, 0, alpha(col::white, std::max(pr, fl)), kShear);
+            b.setBlend(gfx::Blend::Alpha);
+        }
+        // Contenu centré dans la partie hors marge (la marge du 1er bouton est côté logo).
+        float cx = r.x + r.w / 2;
+        if (i == 0) cx -= kWedge * 0.5f * rel;
+        if (i == 1) cx += kWedge * 0.5f * rel;
+        const float iy = r.y + r.h / 2 - 4 * U + m.iconY.at(t) - 8 * U;
+        const float is = 32 * U * m.iconScale.at(t);
+        icon(c, m.glyph, cx - kShear * (iy - (r.y + r.h / 2)), iy, is, alpha(col::white, ca));
+        const float ts = 16 * U;
+        const float ly = r.y + r.h - 7 * U - ts;
+        c.fonts->semibold.drawShadow(b, cx - kShear * (ly + ts / 2 - (r.y + r.h / 2)) - 3 * U, ly, ts, alpha(col::white, ca), m.label,
+                                     gfx::Align::Center);
+        b.popTransform();
+    }
+
+    void trackLogo() {
+        // Rien à faire : les déplacements du logo sont lancés par setState.
     }
 
     void activate(int i) {
         Context &c = game.ctx;
+        const double t = ms(c);
+        buttons_[i].fx.trigger(c, 0.9f, 800);
         c.play(c.sfx->uiSelect);
-        selected_ = i;
         switch (i) {
-        case 0: game.goTo(game.makeSongSelect()); break;
-        case 1: game.goTo(game.makeDownload()); break;
-        case 2: game.goTo(game.makeOptions()); break;
-        default: game.requestExit(); break;
+        case 0: game.openOverlay(game.makeOptions()); break;
+        case 1:
+            if (c.library->sets().empty() && !c.library->scanning()) {
+                game.toast("Aucune map : télécharges-en d'abord !");
+                game.openOverlay(game.makeDownload());
+                return;
+            }
+            setState(State::Entering, false);
+            // Tout glisse à gauche, le logo suit puis disparaît en rétrécissant.
+            slide_.go(t, -800 * U, 400, Ease::InSine);
+            game.logo.x.go(t, kLogoX - 800 * U, 400, Ease::InSine);
+            game.logo.opacity.go(t, 0, 300, Ease::InSine);
+            game.logo.scale.go(t, 0.2f, 300, Ease::InSine);
+            game.goTo(game.makeSongSelect());
+            break;
+        case 2: game.openOverlay(game.makeDownload()); break;
+        case 3:
+            setState(State::Exit, false);
+            exitAt_ = t + 1600;
+            c.music->setVolume(0);
+            break;
         }
     }
 
-    bool open_ = false;
-    int selected_ = 0;
-    float hover_[kCount] = {};
-    float openAnim_ = 0, loud_ = 0, logoHover_ = 0;
-    double enterTime_ = 0, openTime_ = 0;
-    double ripples_[4] = {-10, -10, -10, -10};
-    int rippleNext_ = 0;
-    long lastBeat_ = 0;
+    void setState(State s, bool instant) {
+        Context &c = game.ctx;
+        const double t = ms(c);
+        const State prev = state_;
+        state_ = s;
+        Logo &logo = game.logo;
+        const bool top = s == State::TopLevel;
+        const double delay = prev == State::Initial && !instant ? 150 : 0;
+        for (int i = 0; i < 4; ++i) {
+            MenuButton &b = buttons_[i];
+            if (top) {
+                if (instant) {
+                    b.width.snap(1);
+                    b.contentAlpha.snap(1);
+                } else {
+                    b.width.go(t, 1, 500, Ease::OutExpo, delay);
+                    b.contentAlpha.go(t, 1, 83, Ease::None, delay);
+                }
+            } else if (s == State::Entering) {
+                b.width.go(t, 0, 400, Ease::InSine);
+                b.contentAlpha.go(t, 0, 800, Ease::None);
+            } else {
+                b.width.go(t, 0, 500, Ease::OutExpo);
+                b.contentAlpha.go(t, 0, 500, Ease::None);
+            }
+            b.fx.hovered = false;
+        }
+        if (top) selected_ = game.input().mouseActive ? -1 : 1;
+        // Bande de fond.
+        if (top) {
+            stripAlpha_.go(t, 1, instant ? 0 : 300, Ease::None);
+            stripScaleY_.go(t, 1, instant ? 0 : 400, Ease::OutQuint);
+        } else {
+            stripAlpha_.go(t, 0, 300, Ease::None);
+            stripScaleY_.go(t, 0, 300, Ease::InSine);
+        }
+        // Logo et barre d'outils.
+        if (top) {
+            if (instant) {
+                logo.x.snap(kLogoX);
+                logo.y.snap(kVH / 2);
+                logo.scale.go(t, 0.5f, 300, Ease::OutQuint);
+            } else {
+                logo.moveTo(c, kLogoX, kVH / 2, 0.5f, 200, Ease::In);
+                if (logo.scale.at(t) > 0.6f) logo.impact(c);
+            }
+            game.toolbar.show(c, true);
+            game.setBackground(0.2f, 0, 500, Ease::OutSine);
+        } else if (s == State::Initial || s == State::Exit) {
+            const double d = prev == State::TopLevel ? 150 : 0;
+            logo.moveTo(c, kVW / 2, kVH / 2, 1, 800, Ease::OutExpo, d);
+            game.toolbar.show(c, false);
+            game.setBackground(0, 0, 500, Ease::OutSine);
+        }
+        logo.visualiser = true;
+        logo.triangles = true;
+    }
+
+    void updateTicker() {
+        Context &c = game.ctx;
+        const game::SetInfo *s = game.currentSet();
+        const std::string key = s ? s->folder : "";
+        if (key != tickerKey_ && c.music->playing()) {
+            tickerKey_ = key;
+            tickerStart_ = ms(c);
+        }
+    }
+
+    void drawTicker() {
+        Context &c = game.ctx;
+        const game::SetInfo *s = game.currentSet();
+        if (!s || tickerKey_.empty()) return;
+        const double dt = ms(c) - tickerStart_;
+        float a = 0;
+        if (dt < 400) a = static_cast<float>(dt / 400);
+        else if (dt < 4000) a = 1;
+        else if (dt < 4800) a = 1 - static_cast<float>((dt - 4000) / 800);
+        if (a <= 0 || state_ == State::Exit) return;
+        const float right = kVW - 15 * U, top = game.toolbar.bottom(c) + 5 * U;
+        const std::string title = s->titleUnicode.empty() ? s->title : s->titleUnicode;
+        const std::string artist = s->artistUnicode.empty() ? s->artist : s->artistUnicode;
+        c.batch->shadow(right - 420 * U, top, 420 * U, 50 * U, 30 * U, 40 * U, gfx::rgba(10, 10, 10, static_cast<uint8_t>(60 * a)));
+        text(c, c.fonts->light, right, top, 24 * U, alpha(col::white, a), title, gfx::Align::Right, 600 * U, true);
+        text(c, c.fonts->regular, right, top + 27 * U, 16 * U, alpha(col::white, a), artist, gfx::Align::Right, 600 * U, true);
+    }
+
+    void drawTip() {
+        Context &c = game.ctx;
+        gfx::SpriteBatch &b = *c.batch;
+        const double dt = ms(c) - tipStart_;
+        const char *tip = kTips[tip_];
+        const double fadeOutAt = 600 + 800 + 1600 + 80.0 * static_cast<double>(strlen(tip));
+        float a = 0, sc = 0.9f;
+        if (dt >= 600) {
+            const float k = static_cast<float>(std::min(1.0, (dt - 600) / 800.0));
+            a = anim::ease(Ease::OutQuint, k);
+            sc = 0.9f + 0.1f * anim::ease(Ease::OutElasticHalf, k);
+        }
+        if (dt > fadeOutAt) a *= 1 - anim::ease(Ease::OutQuint, static_cast<float>(std::min(1.0, (dt - fadeOutAt) / 2000.0)));
+        if (a <= 0.001f || state_ == State::Exit) return;
+        const float w = 600 * U + 20 * U, ts = 16 * U;
+        const float h = 10 * U * 2 + ts * 2 + 8 * U;
+        const float x = kVW / 2 - w / 2, y = kVH - 20 * U - h;
+        b.pushScaleAround(kVW / 2, y + h / 2, sc, a);
+        b.roundRect(x, y, w, h, 10 * U, alpha(hex(0x171a1c), 0.75f));
+        icon(c, fa::lightbulb, x + 10 * U + 8 * U, y + 10 * U + 8 * U, 16 * U, col::pink0);
+        c.fonts->semibold.draw(b, x + 10 * U + 24 * U, y + 10 * U, ts, col::pink0, "Astuce");
+        text(c, c.fonts->regular, x + 10 * U, y + 10 * U + ts + 8 * U, ts, col::white, tip, gfx::Align::Left, w - 20 * U);
+        b.popTransform();
+    }
+
+    MenuButton buttons_[4];
+    State state_ = State::Initial;
+    int selected_ = -1;
+    Tween screenAlpha_{0}, stripAlpha_{0}, stripScaleY_{0}, slide_{0}, flash_{0};
+    SideFlashes flashes_;
     bool previewStarted_ = false;
+    std::string tickerKey_;
+    double tickerStart_ = -1e9, tipStart_ = 0, exitAt_ = 0;
+    int tip_ = 0;
 };
 
 }  // namespace

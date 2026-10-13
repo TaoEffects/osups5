@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -12,19 +13,26 @@
 #include "game/library.h"
 #include "game/play.h"
 #include "net/mirror.h"
+#include "ui/lz.h"
 
 class Game;
 
+// Un écran gère lui-même ses animations d'entrée et de sortie, comme les
+// OsuScreen de lazer : pendant une transition, l'ancien et le nouveau sont
+// dessinés ensemble (le nouveau au-dessus quand on avance, dessous au retour).
 class Screen {
 public:
     explicit Screen(Game &g) : game(g) {}
     virtual ~Screen() = default;
+    // forward : l'écran arrive « par-dessus » (true) ou on revient à lui (false).
     virtual void enter() {}
-    virtual void leave() {}
+    // Lance l'animation de sortie ; renvoie sa durée en ms (l'écran reste dessiné).
+    virtual double leave() { return 0; }
     virtual void update(const UiInput &in) = 0;
     virtual void render() = 0;
     // Écran de jeu : les boutons servent à frapper, pas à naviguer.
     virtual bool gameplay() const { return false; }
+    bool forward = true;
 
 protected:
     Game &game;
@@ -49,14 +57,27 @@ public:
 
     Context ctx;
 
-    // Navigation entre écrans (fondu enchaîné).
-    void goTo(std::unique_ptr<Screen> next);
+    // Navigation entre écrans. forward = false pour un retour en arrière.
+    void goTo(std::unique_ptr<Screen> next, bool forward = true);
+    // Overlays par-dessus l'écran courant (options, téléchargement).
+    void openOverlay(std::unique_ptr<Screen> overlay);
+    void closeOverlay();
+    bool overlayOpen() const { return overlay_ != nullptr; }
+    std::unique_ptr<Screen> makeIntro();
+    std::unique_ptr<Screen> makeFirstRun();
+    std::unique_ptr<Screen> makePlayerLoader();
     std::unique_ptr<Screen> makeMainMenu();
     std::unique_ptr<Screen> makeSongSelect();
     std::unique_ptr<Screen> makePlay();
     std::unique_ptr<Screen> makeResults(const game::PlayResult &result);
     std::unique_ptr<Screen> makeOptions();
     std::unique_ptr<Screen> makeDownload();
+
+    // Map préparée par l'écran de chargement pour la partie suivante.
+    game::Beatmap preparedMap;
+    std::string preparedKey;
+    int retryCount = 0;
+    bool quickRestart = false;
 
     // Sélection courante.
     int selectedSet = -1, selectedDiff = 0;
@@ -65,8 +86,16 @@ public:
     const game::DiffInfo *currentDiff() const;
     void select(int set, int diff, bool playPreview);
 
-    // Fond flouté du set sélectionné (fondu entre l'ancien et le nouveau).
-    void drawMenuBackground(float dim, float parallaxX = 0, float parallaxY = 0);
+    // Fond global (image de la map choisie) : assombrissement et flou animés,
+    // réglés par chaque écran (comme les BackgroundScreen de lazer).
+    void setBackground(float dim, float blur, double durationMs = 500, anim::Ease e = anim::Ease::OutQuint);
+    void drawBackground();
+    float backgroundParallax = 1;
+    bool backgroundVisible = true;
+    // Éléments persistants façon lazer.
+    lz::Logo logo;
+    lz::Toolbar toolbar;
+    bool introFlash = false;  // l'intro vient de finir : flash blanc à l'arrivée du menu
     // Vignette (image de fond réduite) d'un set, chargée à la demande ; nullptr si pas prête.
     const gfx::Texture *thumbnail(int setIndex);
     // Dernières entrées (pour les écrans qui en ont besoin au rendu).
@@ -102,14 +131,26 @@ private:
     gfx::ImageLoader images_;
     bool audioOk_ = false;
 
-    std::unique_ptr<Screen> screen_, next_;
-    double transitionStart_ = -10;
+    std::unique_ptr<Screen> screen_;
+    struct Leaving {
+        std::unique_ptr<Screen> screen;
+        double until;
+        bool above;  // dessiné au-dessus de l'écran courant (retour en arrière)
+    };
+    std::vector<Leaving> leaving_;
+    std::unique_ptr<Screen> overlay_, overlayLeaving_;
+    double overlayLeaveUntil_ = 0;
     bool exit_ = false;
+    void handleToolbar(const UiInput &in);
+    void handleDownloads();
+    std::vector<const net::DownloadState *> handledDownloads_;
 
-    // Fonds
-    gfx::Texture bgCurrent_, bgPrevious_;
-    double bgFadeStart_ = -10;
-    uint64_t bgTicket_ = 0;
+    // Fonds : version nette et version floutée, chacune en fondu enchaîné.
+    gfx::Texture bgCurrent_, bgPrevious_, bgBlurCurrent_, bgBlurPrevious_;
+    double bgFadeStart_ = -10, bgBlurFadeStart_ = -10;
+    uint64_t bgTicket_ = 0, bgBlurTicket_ = 0;
+    anim::Tween bgDim_{0.3f}, bgBlur_{0};
+    lz::Triangles bgTriangles_{99};
     std::string bgPath_;
     std::string previewAudio_;
 

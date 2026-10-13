@@ -15,6 +15,8 @@ namespace game {
 struct Mods {
     bool noFail = false, easy = false, hardRock = false, hidden = false;
     bool autoplay = false;  // la map se joue toute seule (score non enregistré)
+    bool doubleTime = false, nightcore = false, halfTime = false;  // NC = DT avec la hauteur qui monte
+    double rate() const { return doubleTime || nightcore ? 1.5 : halfTime ? 0.75 : 1.0; }
     float scoreMultiplier() const;
     std::string label() const;  // "NF HD" etc.
 };

@@ -22,7 +22,8 @@ constexpr float kVW = 1920.0f;  // taille de l'écran virtuel
 constexpr float kVH = 1080.0f;
 
 struct Fonts {
-    gfx::Font regular, semibold, bold;
+    gfx::Font light, regular, semibold, bold;
+    gfx::Font icons;  // Font Awesome Free (voir ui/icons.h)
 };
 
 struct Textures {
@@ -79,6 +80,9 @@ struct Context {
     long beatIndex = 0;
     float beatPulse = 0;       // 1 juste après un temps, décroît
     bool kiai = false;
+    long beatIndexEarly = 0;   // temps courant avec 60 ms d'avance (animations « sur » le temps)
+    float amplitude = 0;       // niveau sonore de la musique (0..1)
+    bool trackRunning = false;
     float dt = 0;
 
     void play(const audio::Sample &s, float gain = 1.0f) const { mixer->play(&s, gain); }

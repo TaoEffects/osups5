@@ -16,7 +16,6 @@
 #include "net/http.h"
 #include "render/gl.h"
 #include "render/procedural.h"
-#include "ui/theme.h"
 #include "version.h"
 
 namespace {
@@ -155,9 +154,13 @@ bool Game::init() {
 
     if (!batch_.init()) return false;
     const std::string fonts = std::string(plat::assetsDir()) + "/fonts/";
-    fonts_.regular.load(fonts + "Inter-Regular.ttf", 40, 2048, 1024);
-    fonts_.semibold.load(fonts + "Inter-SemiBold.ttf", 40, 2048, 1024);
-    fonts_.bold.load(fonts + "Inter-Bold.ttf", 80, 2048, 2048);
+    // Outfit (OFL) ; Inter complète les symboles qu'Outfit n'a pas (★, ♪, ✕...).
+    const std::string fallback = fonts + "Inter-Regular.ttf";
+    fonts_.light.load(fonts + "Outfit-Light.ttf", fallback);
+    fonts_.regular.load(fonts + "Outfit-Regular.ttf", fallback);
+    fonts_.semibold.load(fonts + "Outfit-SemiBold.ttf", fallback);
+    fonts_.bold.load(fonts + "Outfit-Bold.ttf", fallback);
+    fonts_.icons.load(fonts + "FontAwesome-Solid.ttf", "", true);
     tex_.disc = gfx::makeHitCircle(256);
     {
         // Disque plein uni (le "hit circle" procédural a un bord blanc).
@@ -190,28 +193,49 @@ bool Game::init() {
     images_.start(3, ctx.dataDir + "/cache");
     mirror.start(settings_.mirror, ctx.songsDir);
     loadScores();
-    ui::init(ctx);
-    screen_ = makeMainMenu();
-    screen_->enter();
+#if !defined(__PROSPERO__)
+    // Tests sur PC : RHYTHM_TEST=results ouvre directement un écran de résultats factice.
+    if (const char *test = getenv("RHYTHM_TEST"); test && std::string(test) == "results") {
+        game::PlayResult r;
+        r.score = 734512;
+        r.accuracy = 0.9612;
+        r.maxCombo = 412;
+        r.n300 = 380;
+        r.n100 = 21;
+        r.n50 = 3;
+        r.nMiss = 2;
+        r.rank = "S";
+        r.completed = true;
+        r.unstableRate = 142.3;
+        r.meanError = -12.4;
+        logo.opacity.snap(0);
+        goTo(makeResults(r));
+        return true;
+    }
+#endif
+    goTo(makeIntro());
     return true;
 }
 
 void Game::shutdown() {
     if (screen_) screen_->leave();
     screen_.reset();
-    next_.reset();
+    leaving_.clear();
+    overlay_.reset();
+    overlayLeaving_.reset();
     mixer_.setMusic(nullptr);
     plat::audioStop();
     music_.unload();
     mirror.stop();
     images_.stop();
     ctx.saveSettings();
-    ui::shutdown();
     for (gfx::Texture *t : {&tex_.disc, &tex_.ring, &tex_.ringThick, &tex_.glow, &tex_.arrow, &tex_.triangle, &tex_.spinner, &tex_.circleTriangles,
-                            &bgCurrent_, &bgPrevious_})
+                            &bgCurrent_, &bgPrevious_, &bgBlurCurrent_, &bgBlurPrevious_})
         gfx::destroyTexture(*t);
     for (auto &kv : thumbs_) gfx::destroyTexture(kv.second.tex);
     thumbs_.clear();
+    fonts_.light.shutdown();
+    fonts_.icons.shutdown();
     fonts_.regular.shutdown();
     fonts_.semibold.shutdown();
     fonts_.bold.shutdown();
@@ -219,9 +243,71 @@ void Game::shutdown() {
     batch_.shutdown();
 }
 
-void Game::goTo(std::unique_ptr<Screen> next) {
-    next_ = std::move(next);
-    transitionStart_ = ctx.now;
+void Game::goTo(std::unique_ptr<Screen> next, bool forward) {
+    if (screen_) {
+        screen_->forward = forward;
+        const double dur = screen_->leave();
+        // Gardé au moins jusqu'à l'image suivante : goTo peut être appelé depuis
+        // l'update de l'écran lui-même.
+        leaving_.push_back({std::move(screen_), ctx.now * 1000 + std::max(dur, 1.0), !forward});
+    }
+    screen_ = std::move(next);
+    screen_->forward = forward;
+    screen_->enter();
+}
+
+void Game::openOverlay(std::unique_ptr<Screen> overlay) {
+    if (overlay_) return;
+    overlay_ = std::move(overlay);
+    overlay_->forward = true;
+    overlay_->enter();
+}
+
+void Game::closeOverlay() {
+    if (!overlay_) return;
+    overlay_->forward = false;
+    overlayLeaveUntil_ = ctx.now * 1000 + std::max(1.0, overlay_->leave());
+    overlayLeaving_ = std::move(overlay_);
+}
+
+// Téléchargements terminés : ajout à la bibliothèque (thread principal), quel que
+// soit l'écran affiché.
+void Game::handleDownloads() {
+    for (const auto &d : mirror.downloads()) {
+        const int phase = d->phase.load();
+        if (phase < 3) continue;
+        if (std::find(handledDownloads_.begin(), handledDownloads_.end(), d.get()) != handledDownloads_.end()) continue;
+        handledDownloads_.push_back(d.get());
+        if (phase == 3) {
+            if (library_.addFolder(d->folder)) {
+                if (!d->quiet) {
+                    ctx.play(sfx_.uiDownloaded);
+                    toast("Installée : " + d->label);
+                }
+                const int idx = library_.findSet(d->folder);
+                if (idx >= 0 && selectedSet < 0) select(idx, 0, true);
+            }
+        } else if (!d->quiet) {
+            ctx.play(sfx_.uiError);
+            toast("Échec : " + d->error);
+        }
+    }
+}
+
+void Game::handleToolbar(const UiInput &in) {
+    switch (toolbar.update(ctx, in)) {
+    case lz::Toolbar::Settings:
+        if (!overlay_) openOverlay(makeOptions());
+        break;
+    case lz::Toolbar::Download:
+        if (!overlay_) openOverlay(makeDownload());
+        break;
+    case lz::Toolbar::Home:
+        if (overlay_) closeOverlay();
+        goTo(makeMainMenu(), false);
+        break;
+    default: break;
+    }
 }
 
 const game::SetInfo *Game::currentSet() const {
@@ -248,12 +334,16 @@ void Game::select(int set, int diff, bool preview) {
     const std::string bg = d->background.empty() ? "" : s->path(ctx.songsDir) + "/" + d->background;
     if (bg != bgPath_) {
         bgPath_ = bg;
-        bgTicket_ = bg.empty() ? 0 : images_.request(bg, 960, 2);
+        // Version nette (fond de menu, sélection) et version floutée (chargement, résultats).
+        bgTicket_ = bg.empty() ? 0 : images_.request(bg, 1920, 0);
+        bgBlurTicket_ = bg.empty() ? 0 : images_.request(bg, 480, 3);
         if (bg.empty()) {
             gfx::destroyTexture(bgPrevious_);
+            gfx::destroyTexture(bgBlurPrevious_);
             bgPrevious_ = bgCurrent_;
-            bgCurrent_ = gfx::Texture{};
-            bgFadeStart_ = ctx.now;
+            bgBlurPrevious_ = bgBlurCurrent_;
+            bgCurrent_ = bgBlurCurrent_ = gfx::Texture{};
+            bgFadeStart_ = bgBlurFadeStart_ = ctx.now;
         }
     }
     if (preview && (setChanged || previewAudio_ != s->path(ctx.songsDir) + "/" + d->audioFile)) playPreview();
@@ -302,6 +392,13 @@ void Game::updateBackgroundLoads() {
             thumbTickets_.erase(th);
             continue;
         }
+        if (done.ticket == bgBlurTicket_) {
+            gfx::destroyTexture(bgBlurPrevious_);
+            bgBlurPrevious_ = bgBlurCurrent_;
+            bgBlurCurrent_ = done.ok ? done.texture : gfx::Texture{};
+            bgBlurFadeStart_ = ctx.now;
+            continue;
+        }
         if (done.ticket != bgTicket_) {
             gfx::Texture t = done.texture;
             gfx::destroyTexture(t);
@@ -314,19 +411,48 @@ void Game::updateBackgroundLoads() {
     }
 }
 
-void Game::drawMenuBackground(float dim, float px, float py) {
-    const float k = anim::clamp01(static_cast<float>((ctx.now - bgFadeStart_) / 0.5));
-    ui::background(ctx, nullptr, 0, px, py);
+void Game::setBackground(float dim, float blur, double dur, anim::Ease e) {
+    const double t = ctx.now * 1000;
+    if (bgDim_.target() != dim) bgDim_.go(t, dim, dur, e);
+    if (bgBlur_.target() != blur) bgBlur_.go(t, blur, dur, e);
+}
+
+void Game::drawBackground() {
     gfx::SpriteBatch &b = batch_;
-    auto draw = [&](const gfx::Texture &t, float alpha) {
-        if (!t.id || alpha <= 0) return;
-        const float bw = static_cast<float>(t.width), bh = static_cast<float>(t.height);
-        const float s = std::fmax(kVW / bw, kVH / bh) * 1.08f;
-        b.quad(t, (kVW - bw * s) / 2 + px * 30, (kVH - bh * s) / 2 + py * 30, bw * s, bh * s, gfx::withAlpha(gfx::rgba(255, 255, 255), alpha));
+    const double t = ctx.now * 1000;
+    // Fond par défaut (aucune map) : dégradé sombre et grands triangles lents.
+    b.roundRectGradient(0, 0, kVW, kVH, 0, gfx::Corners::vertical(lz::hex(0x2a1f3d), lz::hex(0x120e1c)));
+    bgTriangles_.scaleAdjust = 2.5f;
+    bgTriangles_.velocity = 0.5f;
+    bgTriangles_.update(kVW, kVH, ctx.dt * 1000);
+    bgTriangles_.draw(ctx, 0, 0, lz::hex(0x2a1f3d), lz::hex(0x3a2b55), 1);
+    if (!backgroundVisible) return;
+    // Parallaxe légère suivant la souris (comme lazer).
+    const UiInput &in = lastInput_;
+    const float px = in.mouseActive ? (in.mouseX / kVW - 0.5f) * 2 : 0, py = in.mouseActive ? (in.mouseY / kVH - 0.5f) * 2 : 0;
+    const float amount = 0.02f * backgroundParallax;
+    auto draw = [&](const gfx::Texture &tex, float alpha) {
+        if (!tex.id || alpha <= 0.001f) return;
+        const float bw = static_cast<float>(tex.width), bh = static_cast<float>(tex.height);
+        const float sc = std::fmax(kVW / bw, kVH / bh) * (1 + amount);
+        b.quad(tex, (kVW - bw * sc) / 2 - px * kVW * amount / 2, (kVH - bh * sc) / 2 - py * kVH * amount / 2, bw * sc, bh * sc,
+               gfx::withAlpha(gfx::rgba(255, 255, 255), alpha));
     };
-    draw(bgPrevious_, 1 - k);
-    draw(bgCurrent_, bgPrevious_.id ? 1.0f : k);
-    b.rect(0, 0, kVW, kVH, gfx::withAlpha(gfx::rgba(14, 10, 22), dim));
+    const float k = anim::clamp01(static_cast<float>((ctx.now - bgFadeStart_) / 0.8));
+    const float kb = anim::clamp01(static_cast<float>((ctx.now - bgBlurFadeStart_) / 0.8));
+    const float blur = bgBlur_.at(t);
+    const bool haveSharp = bgCurrent_.id || bgPrevious_.id;
+    // Version nette en dessous, version floutée par-dessus selon le flou demandé.
+    if (blur < 1 || !bgBlurCurrent_.id) {
+        draw(bgPrevious_, 1 - k);
+        draw(bgCurrent_, bgPrevious_.id ? 1.0f : k);
+    }
+    if (blur > 0 || !haveSharp) {
+        const float a = haveSharp ? blur : 1;
+        draw(bgBlurPrevious_, (1 - kb) * a);
+        draw(bgBlurCurrent_, (bgBlurPrevious_.id ? 1.0f : kb) * a);
+    }
+    b.rect(0, 0, kVW, kVH, gfx::rgba(0, 0, 0, static_cast<uint8_t>(std::clamp(bgDim_.at(t), 0.0f, 1.0f) * 255)));
 }
 
 void Game::toast(const std::string &text) {
@@ -521,10 +647,14 @@ void Game::frame(const plat::InputState &raw, double now) {
         const long idx = static_cast<long>(std::floor(beats));
         ctx.beatProgress = static_cast<float>(beats - std::floor(beats));
         if (idx != ctx.beatIndex) ctx.beatIndex = idx;
+        ctx.beatIndexEarly = static_cast<long>(std::floor((t + 60.0) / ctx.beatLength));
         ctx.beatPulse = std::pow(1.0f - ctx.beatProgress, 3.0f);
     } else {
         ctx.beatPulse = anim::approach(ctx.beatPulse, 0, ctx.dt, 0.1f);
     }
+
+    ctx.trackRunning = music_.playing();
+    ctx.amplitude = ctx.trackRunning ? std::min(1.0f, music_.level() * 2.5f) : 0;
 
     // Balayage de la bibliothèque, quelques dossiers par image.
     if (library_.scanning() && library_.scanStep(6)) {
@@ -535,6 +665,7 @@ void Game::frame(const plat::InputState &raw, double now) {
             select(static_cast<int>(rand() % library_.sets().size()), 0, false);
     }
     updateBackgroundLoads();
+    handleDownloads();
     // Vignettes inutilisées depuis 20 s : libérées (mémoire GPU).
     for (auto it = thumbs_.begin(); it != thumbs_.end();) {
         if (it->second.tex.id && now - it->second.lastUse > 20) {
@@ -548,14 +679,18 @@ void Game::frame(const plat::InputState &raw, double now) {
     const UiInput in = buildInput(raw);
     lastInput_ = in;
 
-    // Transition : fondu au noir, changement d'écran au milieu.
-    const double tt = (now - transitionStart_) / 0.34;
-    if (next_ && tt >= 0.5) {
-        if (screen_) screen_->leave();
-        screen_ = std::move(next_);
-        screen_->enter();
+    // Écrans qui finissent leur animation de sortie.
+    const double nowMs = now * 1000;
+    leaving_.erase(std::remove_if(leaving_.begin(), leaving_.end(), [&](const Leaving &l) { return nowMs >= l.until; }),
+                   leaving_.end());
+    if (overlayLeaving_ && nowMs >= overlayLeaveUntil_) overlayLeaving_.reset();
+    logo.update(ctx, in);
+    if (overlay_) {
+        overlay_->update(in);
+    } else {
+        if (screen_ && !screen_->gameplay()) handleToolbar(in);
+        if (screen_) screen_->update(in);
     }
-    if (screen_ && !next_) screen_->update(in);
 
     // Rendu dans la cible MSAA (recréée si la taille change), résolue à la fin.
     if (msaa_.fbo && (msaa_.width != plat::width() || msaa_.height != plat::height())) msaa_.destroy();
@@ -565,20 +700,28 @@ void Game::frame(const plat::InputState &raw, double now) {
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
     batch_.begin(kVW, kVH, plat::width(), plat::height());
+    drawBackground();
+    for (Leaving &l : leaving_)
+        if (!l.above) l.screen->render();
     if (screen_) screen_->render();
-    if (tt >= 0 && tt < 1) {
-        const float a = 1.0f - std::fabs(static_cast<float>(tt) * 2 - 1);
-        batch_.rect(0, 0, kVW, kVH, gfx::withAlpha(gfx::rgba(10, 8, 16), a));
-    }
+    for (Leaving &l : leaving_)
+        if (l.above) l.screen->render();
+    logo.draw(ctx);
+    if (overlayLeaving_) overlayLeaving_->render();
+    if (overlay_) overlay_->render();
+    toolbar.draw(ctx);
     // Notification temporaire.
     const float tk = static_cast<float>(now - toastTime);
     if (tk < 3.0f && !lastToast.empty()) {
         const float a = std::min(1.0f, std::min(tk * 6, (3.0f - tk) * 3));
         const float w = fonts_.semibold.measure(28, lastToast.c_str()) + 60;
-        ui::roundRect(ctx, kVW / 2 - w / 2, 40 - (1 - a) * 30, w, 56, 18, gfx::withAlpha(ui::color::panelLight, a * 0.95f));
-        fonts_.semibold.draw(batch_, kVW / 2, 52 - (1 - a) * 30, 28, gfx::withAlpha(ui::color::text, a), lastToast.c_str(), gfx::Align::Center);
+        const float x = kVW - w - 20 + (1 - anim::outQuint(std::min(1.0f, tk * 3))) * (w + 40);
+        batch_.shadow(x, 80, w, 64, 10, 12, gfx::rgba(0, 0, 0, static_cast<uint8_t>(90 * a)));
+        batch_.roundRect(x, 80, w, 64, 10, gfx::withAlpha(lz::hex(0x22282a), a * 0.97f));
+        batch_.roundRect(x, 80, 8, 64, 4, gfx::withAlpha(lz::col::pink1, a));
+        fonts_.semibold.draw(batch_, x + 32, 97, 28, gfx::withAlpha(lz::col::white, a), lastToast.c_str());
     }
-    if (screen_ && !screen_->gameplay() && in.mouseActive) ui::cursor(ctx, in.mouseX, in.mouseY, (raw.mouse.buttons & 1u) != 0);
+    if (screen_ && (!screen_->gameplay() || overlay_) && in.mouseActive) lz::cursor(ctx, in.mouseX, in.mouseY, (raw.mouse.buttons & 1u) != 0);
     if (settings_.showDebug) {
         char line[160];
         const gfx::BatchStats &bs = batch_.lastFrame();

@@ -23,6 +23,8 @@ struct Settings {
     std::string lastSetFolder;     // dernière map sélectionnée
     int lastDifficulty = 0;
     std::string mirror = "https://osu.direct";
+    bool firstRunDone = false;     // maps de base proposées au premier lancement
+    int skin = 0;                  // style de jeu : 0 épuré (façon WhiteCat), 1 triangles (façon lazer)
 
     bool load(const std::string &path);
     bool save(const std::string &path) const;

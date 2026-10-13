@@ -44,6 +44,7 @@ struct DownloadState {
     std::atomic<int> phase{0};  // 0 attente, 1 téléchargement, 2 extraction, 3 fini, 4 erreur
     std::string error;
     std::string folder;         // dossier créé (phase 3)
+    bool quiet = false;         // pas de notification (maps de base du premier lancement)
 };
 
 class Mirror {
@@ -61,7 +62,9 @@ public:
     void requestCover(int setId, const std::string &url);
     bool takeCover(int &setId, gfx::ImageData &image);
 
-    std::shared_ptr<DownloadState> download(const RemoteSet &set);
+    // quiet : pas de notification à la fin. Si seul set.id est rempli, les infos
+    // (titre, étoiles) sont demandées au miroir avant le téléchargement.
+    std::shared_ptr<DownloadState> download(const RemoteSet &set, bool quiet = false);
     std::vector<std::shared_ptr<DownloadState>> downloads();
 
 private:
