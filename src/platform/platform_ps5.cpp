@@ -129,6 +129,10 @@ int sceSystemServiceLoadExec(const char *path, char *const argv[]);
 int sceKernelSendNotificationRequest(int device, void *request, size_t size, int blocking);
 }
 
+// Tas applicatif de ps5-opengl : 128 Mio par défaut, trop juste pour des maps
+// (musique, images, .osz). Le runtime essaie des tailles plus petites si besoin.
+extern "C" const size_t ps5_opengl_heap_size = 1024u * 1024u * 1024u;
+
 namespace plat {
 namespace {
 

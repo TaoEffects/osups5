@@ -50,6 +50,7 @@ struct MouseState {
     bool connected = false;
     float x = 0, y = 0;             // en pixels de la fenetre
     uint32_t buttons = 0;           // bit 0 = gauche, bit 1 = droit, bit 2 = milieu
+    float wheel = 0;                // crans de molette depuis le dernier appel (+ = vers le haut)
 };
 
 struct InputState {

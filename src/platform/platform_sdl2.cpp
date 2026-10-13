@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -99,11 +100,15 @@ int refreshHz() {
 }
 
 void pollInput(InputState &out) {
+    float wheel = 0;
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_QUIT:
             out.quitRequested = true;
+            break;
+        case SDL_MOUSEWHEEL:
+            wheel += e.wheel.preciseY;
             break;
         case SDL_CONTROLLERDEVICEADDED:
             if (!g_pad) openFirstPad();
@@ -135,6 +140,7 @@ void pollInput(InputState &out) {
     out.mouse.connected = true;
     out.mouse.x = static_cast<float>(mx) * static_cast<float>(g_width) / static_cast<float>(ww > 0 ? ww : 1);
     out.mouse.y = static_cast<float>(my) * static_cast<float>(g_height) / static_cast<float>(wh > 0 ? wh : 1);
+    out.mouse.wheel = wheel;
     out.mouse.buttons = (mb & SDL_BUTTON_LMASK ? 1u : 0u) | (mb & SDL_BUTTON_RMASK ? 2u : 0u) |
                         (mb & SDL_BUTTON_MMASK ? 4u : 0u);
 
@@ -230,7 +236,10 @@ void audioStop() {
 int audioBlockFrames() { return g_audioBlock; }
 
 const char *writableDir() { return "."; }
-const char *assetsDir() { return "ps5/assets"; }
+const char *assetsDir() {
+    const char *env = getenv("RHYTHM_ASSETS");
+    return env && *env ? env : RHYTHM_ASSETS_DIR;
+}
 
 void notify(const char *message) { LOG("notification: %s", message); }
 

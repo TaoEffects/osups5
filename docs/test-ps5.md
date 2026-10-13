@@ -43,24 +43,21 @@ qu'un PC se connecte avant d'initialiser la vidéo : on capte donc aussi un plan
 pendant l'init graphique. Les logs sont enregistrés dans `logs/<date>.log`.
 L'appli affiche aussi une notification avec son IP et le port (9025).
 
-## 3. Lancer et jouer 1 minute
+## 3. Tester (étape 2)
 
-Ce que tu dois voir : fond sombre, titre « rhythm-ps5 », un cadre (l'aire de jeu),
-des cercles numérotés 1-2-3-4 qui apparaissent au tempo (120 BPM) avec un cercle
-d'approche, un carré blanc en haut qui clignote sur chaque temps, un tic de métronome,
-la barre lumineuse de la manette en **rose**, et le panneau DEBUG à droite.
+1. **Menu** : le logo bat au rythme de la musique. Croix pour ouvrir la barre de boutons.
+2. **Télécharger des maps** : choisis-en 2 ou 3 (Croix), attends « Installée ✓ ».
+   L1/R1 change d'onglet (Populaires / Récentes / Favorites), L2/R2 change de page.
+3. **Jouer** : choisis une map, Croix pour lancer. Carré ouvre les mods (essaie « Auto »
+   pour regarder la map se jouer toute seule).
+4. En jeu : **frapper** avec Croix, Carré, Rond, L1, R1, L2, R2 ; **viser** au stick gauche
+   (stick droit = précis) ou au pavé tactile ; **spinners** : fais tourner le stick gauche.
+   **Options** (ou Échap) = pause. **Triangle** = passer l'intro.
+5. **Options** : essaie le **120 Hz** (puis relance l'appli), le volume, le pavé tactile.
+6. **Plantage volontaire** : il n'existe plus dans cette version.
 
-À faire :
-1. **Frapper en rythme** sur 20–30 cercles (Croix, Carré, L1/R1 ou L2/R2) quand le
-   cercle d'approche touche le cercle. Regarde « écart moyen » et « décalage conseillé ».
-2. Bouger le curseur au **stick gauche**, puis au **pavé tactile**.
-3. **Triangle** : test de charge (5000 sprites). Note les FPS avec et sans.
-4. Si tu as un **clavier USB** : branche-le, appuie sur Z/X, regarde la ligne CLAVIER.
-5. **Plantage volontaire** (pour vérifier les rapports) : maintiens **L3+R3 pendant 3 s**.
-   L'appli doit se fermer et un bloc `!!! PLANTAGE` doit apparaître dans le terminal du PC.
-   (À faire en dernier.)
-
-Pour quitter normalement : **L1+R1+Options pendant 2 s**.
+Clavier/souris (PC) : flèches + Entrée/Échap, Z/X pour frapper, souris pour viser et
+cliquer partout, molette pour défiler, F1 mods, F2 hasard, F3 options, Espace passer.
 
 ## 4. Ce qu'il faut me renvoyer
 

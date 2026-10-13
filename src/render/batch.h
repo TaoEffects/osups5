@@ -29,6 +29,21 @@ struct Texture {
 };
 
 Texture createTexture(int width, int height, const uint8_t *rgbaPixels, bool linearFilter);
+// Texture 1 canal lue comme (1, 1, 1, alpha) : police, masques. 4x moins de mémoire.
+Texture createAlphaTexture(int width, int height, const uint8_t *alphaPixels, bool linearFilter);
+// Remplace le contenu (même taille, RGBA).
+void updateTexture(const Texture &texture, const uint8_t *rgbaPixels);
+
+// Premultiplied : pour composer une cible de rendu (couleur déjà multipliée par alpha).
+enum class Blend : uint8_t { Alpha, Additive, Premultiplied };
+
+// Cible de rendu hors écran (texture couleur RGBA).
+struct RenderTarget {
+    GLuint fbo = 0;
+    Texture color;
+    bool create(int width, int height);
+    void destroy();
+};
 void destroyTexture(Texture &texture);
 
 struct BatchStats {
@@ -49,7 +64,19 @@ public:
     void quad(const Texture &tex, float x, float y, float w, float h, uint32_t color, float u0 = 0, float v0 = 0,
               float u1 = 1, float v1 = 1);
     void centered(const Texture &tex, float cx, float cy, float size, uint32_t color);
+    // Quad tourné autour de son centre (angle en radians).
+    void rotated(const Texture &tex, float cx, float cy, float w, float h, float angle, uint32_t color);
+    // Quad quelconque (4 coins dans l'ordre), UV du rectangle entier.
+    void quad4(const Texture &tex, const float xy[8], uint32_t color);
+    // Segment épais.
+    void line(float x0, float y0, float x1, float y1, float thickness, uint32_t color);
     void rect(float x, float y, float w, float h, uint32_t color);
+    // Rectangle à dégradé vertical.
+    void gradient(float x, float y, float w, float h, uint32_t top, uint32_t bottom);
+    void setBlend(Blend blend) { blend_ = blend; }
+    Blend blend() const { return blend_; }
+    // Change de cible (nullptr = écran). Vide le lot en cours.
+    void setTarget(const RenderTarget *target);
     void outline(float x, float y, float w, float h, float thickness, uint32_t color);
     void end();
 
@@ -63,6 +90,7 @@ private:
     };
     struct Command {
         GLuint texture;
+        Blend blend;
         uint32_t firstQuad;
         uint32_t quadCount;
     };
@@ -72,12 +100,17 @@ private:
     static constexpr uint32_t kMaxQuads = 32768;
 
     GLuint program_ = 0, vao_ = 0, vbo_ = 0, ibo_ = 0;
-    GLint scaleLoc_ = -1;
+    GLint scaleLoc_ = -1, offsetLoc_ = -1;
+    float offsetY_ = 1.0f;
     Texture white_;
     std::vector<Vertex> vertices_;
     std::vector<Command> commands_;
     BatchStats current_, last_;
     float scaleX_ = 1, scaleY_ = 1;
+    float virtualW_ = 1, virtualH_ = 1;
+    int viewportW_ = 1, viewportH_ = 1;
+    Blend blend_ = Blend::Alpha;
+    void push(const Texture &tex, const Vertex v[4]);
 };
 
 }  // namespace gfx

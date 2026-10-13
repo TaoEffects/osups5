@@ -14,6 +14,8 @@
 
 namespace audio {
 
+class Music;
+
 struct Sample {
     std::vector<float> stereo;  // L, R entrelacés, 48 kHz
     int frames() const { return static_cast<int>(stereo.size() / 2); }
@@ -40,6 +42,9 @@ public:
     void play(const Sample *sample, float gain, float pan = 0.0f);
     void playAt(const Sample *sample, uint64_t frame, float gain, float pan = 0.0f);
     void setMasterGain(float gain) { master_.store(gain); }
+    void setEffectsGain(float gain) { effects_.store(gain); }
+    // Musique jouée en continu (nullptr = aucune). Le pointeur doit rester valide.
+    void setMusic(Music *music) { music_.store(music); }
 
     // Nombre de trames déjà mixées (position "écrite" de la ligne de temps audio).
     uint64_t framesMixed() const { return framesMixed_.load(std::memory_order_acquire); }
@@ -74,6 +79,8 @@ private:
     std::atomic<uint32_t> queueTail_{0};  // écrit par le thread audio
     Voice voices_[kMaxVoices];
     std::atomic<float> master_{0.8f};
+    std::atomic<float> effects_{1.0f};
+    std::atomic<Music *> music_{nullptr};
 
     std::atomic<uint64_t> framesMixed_{0};
     // Instantané (trames, heure murale) publié par le thread audio, protégé par

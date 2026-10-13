@@ -5,9 +5,9 @@
 #include <cstdio>
 #include <cstring>
 
-#include "app/app.h"
+#include "app/game.h"
+#include "core/settings.h"
 #include "core/crash.h"
-#include "core/fsprobe.h"
 #include "core/log.h"
 #include "core/netlog.h"
 #include "core/thread.h"
@@ -47,22 +47,14 @@ int main() {
         netlog::waitForClient(kWaitForLogClient);
     }
 
-    const std::vector<fsprobe::Result> probes = fsprobe::run({
-        plat::writableDir(),
-        plat::assetsDir(),
-        "/data",
-        "/data/homebrew",
-        "/mnt/usb0",
-        "/mnt/usb1",
-        "/mnt/ext0",
-        "/usb0",
-    });
-
     plat::InitParams params;
     params.title = RHYTHM_APP_NAME;
     params.width = 1920;
     params.height = 1080;
-    params.refreshHz = RHYTHM_REFRESH_HZ;
+    // La fréquence (60/120 Hz) se choisit avant l'init vidéo : on lit les réglages tôt.
+    Settings early;
+    early.load(std::string(plat::writableDir()) + "/settings.cfg");
+    params.refreshHz = early.refreshHz;
     LOG("init video %dx%d @ %d Hz...", params.width, params.height, params.refreshHz);
     if (!plat::init(params)) {
         LOG("ECHEC init plateforme, arret");
@@ -71,10 +63,9 @@ int main() {
     }
     LOG("init video ok");
 
-    // Sur le tas : la pile du thread principal d'un titre natif est peut-être petite.
-    App *appPtr = new App();
-    App &app = *appPtr;
-    if (!app.init(probes)) {
+    Game *gamePtr = new Game();
+    Game &app = *gamePtr;
+    if (!app.init()) {
         LOG("ECHEC init application, arret");
         plat::sleepSeconds(1.0);
         return 1;
@@ -90,7 +81,7 @@ int main() {
 
     LOG("sortie demandee");
     app.shutdown();
-    delete appPtr;
+    delete gamePtr;
     netlog::stop();
     plat::requestExit();
     plat::shutdown();  // sur PS5 ne revient pas : sceSystemServiceLoadExec("exit")

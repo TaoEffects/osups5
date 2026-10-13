@@ -3,6 +3,7 @@
 
 #include <cstring>
 
+#include "audio/music.h"
 #include "platform/platform.h"
 
 namespace audio {
@@ -61,7 +62,7 @@ void Mixer::mix(float *out, int frames) {
     queueTail_.store(tail, std::memory_order_release);
 
     std::memset(out, 0, sizeof(float) * 2 * static_cast<size_t>(frames));
-    const float master = master_.load(std::memory_order_relaxed);
+    const float master = effects_.load(std::memory_order_relaxed);
     int active = 0;
     for (Voice &v : voices_) {
         if (!v.sample) continue;
@@ -87,6 +88,9 @@ void Mixer::mix(float *out, int frames) {
             ++active;
         }
     }
+    if (Music *music = music_.load(std::memory_order_acquire)) music->render(out, frames, blockStart);
+    const float gain = master_.load(std::memory_order_relaxed);
+    for (int i = 0; i < frames * 2; ++i) out[i] *= gain;
     // Écrêtage doux pour éviter les claquements si plusieurs sons se superposent.
     for (int i = 0; i < frames * 2; ++i) {
         const float x = out[i];

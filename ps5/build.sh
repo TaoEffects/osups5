@@ -4,8 +4,7 @@
 # Build PS5 : produit un dossier d'application native (titre installé), comme
 # l'exige ps5-opengl (une appli OpenGL ne se lance PAS via un chargeur d'ELF).
 #
-#   bash ps5/build.sh            # 1080p 60 Hz
-#   REFRESH=120 bash ps5/build.sh
+#   bash ps5/build.sh            # la fréquence (60/120 Hz) se règle dans les options du jeu
 #
 # Résultat : build/ps5/dist/PPSA99731/ (à copier dans /data/homebrew/ sur la PS5)
 #            build/ps5/dist/PPSA99731.zip
@@ -22,8 +21,6 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 deps="$root/.deps"
 out="$root/build/ps5"
-refresh=${REFRESH:-60}
-case "$refresh" in 60|120) ;; *) echo "REFRESH doit valoir 60 ou 120" >&2; exit 2 ;; esac
 
 boilerplate_repo=https://github.com/blackbearreloaded/ps5-native-app-boilerplate
 boilerplate_commit=b8dc4a3fe2e05e826b037bd68824751c7468a6d7
@@ -83,21 +80,19 @@ gl_prefix="$sdk_dir/sdk"
 (cd "$gl_prefix" && sha256sum --check --strict --quiet manifest.sha256)
 
 # --- 4. Compilation de l'application ---------------------------------------------------
-step "Compilation (clang-18, cible x86_64-sie-ps5, $refresh Hz)"
+step "Compilation (clang-18, cible x86_64-sie-ps5)"
 obj="$out/obj"
 rm -rf "$obj"
 mkdir -p "$obj"
 git_rev=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo inconnue)
 [[ -z $(git -C "$root" status --porcelain 2>/dev/null) ]] || git_rev="$git_rev+modifs"
 common=(-O2 -g -fPIC -ffunction-sections -fdata-sections -fno-omit-frame-pointer -Wall -Wextra
-        -DGL_GLEXT_PROTOTYPES=1 "-DRHYTHM_REFRESH_HZ=$refresh" "-DRHYTHM_GIT_REV=\"$git_rev\""
-        -I"$gl_prefix/include" -I"$root/src" -I"$root/third_party/font8x8")
-sources=(
-    src/main.cpp src/app/app.cpp src/audio/mixer.cpp src/audio/synth.cpp
-    src/core/crash.cpp src/core/fsprobe.cpp src/core/log.cpp src/core/netlog.cpp src/core/thread.cpp
-    src/render/batch.cpp src/render/font.cpp src/render/procedural.cpp
-    src/platform/platform_ps5.cpp third_party/font8x8/font8x8.c
-)
+        -DGL_GLEXT_PROTOTYPES=1 "-DRHYTHM_GIT_REV=\"$git_rev\""
+        -I"$gl_prefix/include" -I"$root/src" -I"$root/third_party" -I"$root/third_party/font8x8")
+# Toutes les sources du jeu (sauf la plateforme PC) + bibliothèques tierces en C.
+mapfile -t sources < <(cd "$root" && find src -name '*.cpp' ! -name 'platform_sdl2.cpp' | sort)
+sources+=(third_party/font8x8/font8x8.c third_party/impl.c third_party/miniz/miniz.c third_party/miniz/miniz_tdef.c
+          third_party/miniz/miniz_tinfl.c third_party/miniz/miniz_zip.c)
 objects=()
 for source in "${sources[@]}"; do
     object="$obj/$(echo "$source" | tr '/' '_').o"
@@ -124,7 +119,8 @@ done
 mkdir -p "$app/sce_sys" "$app/assets" "$app/src" "$app/include" "$app/vendor"
 cp "$root/ps5/sce_sys/param.json" "$root/ps5/sce_sys/icon0.png" "$app/sce_sys/"
 cp -a "$root/ps5/assets/." "$app/assets/"
-python3 "$glue/tools/native-display-metadata.py" "$app/sce_sys/param.json" --fps "$refresh"
+# Toujours déclarer la capacité 120 Hz : le choix 60/120 se fait dans les options.
+python3 "$glue/tools/native-display-metadata.py" "$app/sce_sys/param.json" --fps 120
 
 heap_source="$app/tooling/native/sce_module_writer.cpp"
 heap_default='write_u64(result.data, result.heap_size, std::numeric_limits<std::uint64_t>::max());'
@@ -147,6 +143,9 @@ static_libraries=(
     "$payload_sdk/target/lib/libSceAudioOut.so"
     "$payload_sdk/target/lib/libSceKeyboard.so"
     "$payload_sdk/target/lib/libSceSystemService.so"
+    "$payload_sdk/target/lib/libSceNet.so"
+    "$payload_sdk/target/lib/libSceSsl.so"
+    "$payload_sdk/target/lib/libSceHttp.so"
     "$payload_sdk/target/lib/libunwind.a"
     "$payload_sdk/target/lib/libc++abi.a"
     "$payload_sdk/target/lib/libc++.a"
