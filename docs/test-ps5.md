@@ -1,0 +1,100 @@
+# Tester sur la PS5 (étape 1)
+
+But du test : vérifier sur ta console que l'appli **démarre**, **affiche**, **joue du
+son**, **lit la manette**, et **renvoie ses logs** au PC. Les plantages étant souvent
+silencieux, tout est prévu pour qu'on récupère un maximum d'informations même si ça
+plante.
+
+## Ce qu'il te faut
+
+- Console avec Relapse + HEN (etaHEN / kstuff…) comme d'habitude.
+- Un **serveur FTP** sur la console (celui fourni par ton HEN, port 2121 en général).
+- Un **chargeur de titres en dossier** : le boilerplate est validé avec
+  **ShadowMountPlus** (github.com/drakmor/ShadowMountPlus). Il surveille
+  `/data/homebrew/` et fait apparaître les titres sur l'écran d'accueil.
+- Sur le PC : Python 3 (pour recevoir les logs).
+
+> Attention : ce n'est **pas** un payload ELF à envoyer sur le port 9021. ps5-opengl
+> exige un titre installé (voir `docs/verifications.md`).
+
+## 1. Installer l'appli
+
+Option A — à la main (FileZilla ou autre client FTP) :
+1. Décompresse `PPSA99731.zip` sur le PC : tu obtiens un dossier `PPSA99731/`.
+2. Copie **le dossier entier** dans `/data/homebrew/` de la console :
+   le résultat doit être `/data/homebrew/PPSA99731/eboot.bin` (+ `sce_sys/`, `sce_module/`, `assets/`).
+   Ne copie pas le .zip lui-même.
+
+Option B — depuis Linux/WSL avec le dépôt : `bash ps5/deploy.sh <ip-de-la-ps5>`.
+
+Attends que ShadowMountPlus signale le titre prêt : **« rhythm-ps5 (dev) »** apparaît
+dans les jeux (icône rose et blanche).
+
+## 2. Lancer le récepteur de logs AVANT l'appli
+
+Sur le PC, dans le dossier du dépôt :
+
+```
+python3 tools/logrecv.py <ip-de-la-ps5>
+```
+
+Il attend l'appli et réessaie en boucle. Au démarrage, l'appli **patiente 3 secondes**
+qu'un PC se connecte avant d'initialiser la vidéo : on capte donc aussi un plantage
+pendant l'init graphique. Les logs sont enregistrés dans `logs/<date>.log`.
+L'appli affiche aussi une notification avec son IP et le port (9025).
+
+## 3. Lancer et jouer 1 minute
+
+Ce que tu dois voir : fond sombre, titre « rhythm-ps5 », un cadre (l'aire de jeu),
+des cercles numérotés 1-2-3-4 qui apparaissent au tempo (120 BPM) avec un cercle
+d'approche, un carré blanc en haut qui clignote sur chaque temps, un tic de métronome,
+la barre lumineuse de la manette en **rose**, et le panneau DEBUG à droite.
+
+À faire :
+1. **Frapper en rythme** sur 20–30 cercles (Croix, Carré, L1/R1 ou L2/R2) quand le
+   cercle d'approche touche le cercle. Regarde « écart moyen » et « décalage conseillé ».
+2. Bouger le curseur au **stick gauche**, puis au **pavé tactile**.
+3. **Triangle** : test de charge (5000 sprites). Note les FPS avec et sans.
+4. Si tu as un **clavier USB** : branche-le, appuie sur Z/X, regarde la ligne CLAVIER.
+5. **Plantage volontaire** (pour vérifier les rapports) : maintiens **L3+R3 pendant 3 s**.
+   L'appli doit se fermer et un bloc `!!! PLANTAGE` doit apparaître dans le terminal du PC.
+   (À faire en dernier.)
+
+Pour quitter normalement : **L1+R1+Options pendant 2 s**.
+
+## 4. Ce qu'il faut me renvoyer
+
+1. Le fichier `logs/<date>.log` (le plus important).
+2. Une **photo de l'écran** avec le panneau DEBUG visible (la ligne « DEBUG (ps5, …) »,
+   AUDIO, MANETTE, et la liste des dossiers `/data`, `/mnt/usb0`… avec
+   existe/lisible/inscriptible).
+3. Ton ressenti, en quelques mots :
+   - le son des frappes arrive-t-il **tout de suite** ou avec un retard perceptible ?
+   - le carré qui clignote et le tic sont-ils **ensemble** ?
+   - le mouvement est-il **fluide** (saccades ?) ;
+   - la valeur du « décalage conseillé » après ~30 frappes.
+4. Ton **firmware** et le chargeur utilisé (ShadowMountPlus version…).
+
+## Si ça ne marche pas
+
+| Symptôme | Ce que ça nous apprend / quoi m'envoyer |
+|---|---|
+| Le titre n'apparaît pas | problème d'installation/chargeur : vérifie le chemin `/data/homebrew/PPSA99731/eboot.bin`, envoie une capture du dossier FTP |
+| Écran noir puis retour à l'accueil, rien dans logrecv | plantage avant le réseau : récupère le fichier `/download0/ps5-opengl.log` si ton outil FTP voit `/user/download/PPSA99731/` (sinon dis-le-moi) |
+| Logs reçus mais s'arrêtent à « init video » | souci EGL/ps5-opengl sur ton firmware : le log suffit |
+| Bloc `!!! PLANTAGE` | copie-le tel quel : je le décode avec `tools/symbolize.py` et le fichier de symboles de la même build |
+| Console qui redémarre | note à quel moment (avant/après l'affichage) |
+
+Ferme complètement l'appli avant de réinstaller une nouvelle version.
+
+## Pour les développeurs : build
+
+```
+bash ps5/build.sh            # 1080p 60 Hz ; REFRESH=120 pour du 120 Hz
+cmake -S . -B build/pc -G Ninja && ninja -C build/pc && ./build/pc/rhythm-ps5   # version PC
+```
+
+Prérequis Ubuntu/WSL : `clang-18 lld-18 llvm-18 libclang-rt-18-dev make ninja-build
+python3 curl wget unzip git` (+ `libsdl2-dev libgl-dev cmake` pour la version PC).
+Le script télécharge et vérifie (SHA-256 / commits épinglés) le SDK payload, le
+boilerplate et le SDK ps5-opengl 1.0.1 dans `.deps/`.
