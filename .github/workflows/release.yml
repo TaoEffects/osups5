@@ -60,6 +60,10 @@ jobs:
           MSG: ${{ github.event.head_commit.message }}
         run: echo "name=$(printf '%s' "$MSG" | sed -n 's/.*\[release \([^]]*\)\].*/\1/p' | head -1)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+      - name: Placer le tag sur ce commit
+        run: |
+          git tag -f "${{ steps.tag.outputs.name }}" "$GITHUB_SHA"
+          git push -f origin "refs/tags/${{ steps.tag.outputs.name }}"
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
