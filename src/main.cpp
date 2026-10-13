@@ -38,22 +38,23 @@ int main() {
     LOG("log fichier: %s", *logx::filePath() ? logx::filePath() : "(impossible a ouvrir)");
 
     thr::logStackInfo("principal");
-    netlog::start(kLogPort);
-    if (kWaitForLogClient > 0) {
-        char msg[160];
-        snprintf(msg, sizeof(msg), "rhythm-ps5 : log sur %s:%u", netlog::localAddress(), kLogPort);
-        plat::notify(msg);
-        LOG("attente d'un client de log pendant %.0f s...", kWaitForLogClient);
-        netlog::waitForClient(kWaitForLogClient);
+    // Réglages lus tôt : fréquence d'affichage et journal réseau (option « Infos techniques »).
+    Settings early;
+    early.load(std::string(plat::writableDir()) + "/settings.cfg");
+    if (early.showDebug) {
+        netlog::start(kLogPort);
+        if (kWaitForLogClient > 0) {
+            char msg[160];
+            snprintf(msg, sizeof(msg), "rhythm-ps5 : journal sur %s:%u", netlog::localAddress(), kLogPort);
+            plat::notify(msg);
+            netlog::waitForClient(kWaitForLogClient);
+        }
     }
 
     plat::InitParams params;
     params.title = RHYTHM_APP_NAME;
     params.width = 1920;
     params.height = 1080;
-    // La fréquence (60/120 Hz) se choisit avant l'init vidéo : on lit les réglages tôt.
-    Settings early;
-    early.load(std::string(plat::writableDir()) + "/settings.cfg");
     params.refreshHz = early.refreshHz;
     LOG("init video %dx%d @ %d Hz...", params.width, params.height, params.refreshHz);
     if (!plat::init(params)) {

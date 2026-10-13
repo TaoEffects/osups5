@@ -159,6 +159,8 @@ public:
             updateMods(in);
             return;
         }
+        // Sélection d'avant toute action (« au hasard » compris) : sert à détecter le changement.
+        const int oldSet = set_, oldDiff = diff_;
         // Pied de page et bouton retour (souris).
         const float fy = footerTop();
         backFx_.setHover(c, in.hover(12 * U, kVH - 12 * U - kBackH, kBackW, kBackH));
@@ -200,7 +202,6 @@ public:
         if (in.extra) footerAction(1);
         if (in.options) footerAction(2);
 
-        const int oldSet = set_, oldDiff = diff_;
         const int pos = itemIndex(set_, diff_);
         const int n = static_cast<int>(items_.size());
         if (in.down || in.wheel < 0) {

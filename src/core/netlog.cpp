@@ -158,7 +158,7 @@ bool start(uint16_t port) {
     g_running.store(true);
     g_listenFd = fd;
     g_threadStarted = thr::start(g_thread, serverLoop, nullptr, "netlog");
-    LOG("netlog: en ecoute sur %s:%u (python3 tools/logrecv.py %s)", g_address, port, g_address);
+    LOG("netlog: en ecoute sur %s:%u", g_address, port);
     return true;
 }
 

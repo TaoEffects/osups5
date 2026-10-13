@@ -131,6 +131,7 @@ int scePadSetLightBar(int handle, const SonyPadColor *color);
 int scePadClose(int handle);
 int sceKernelLoadStartModule(const char *path, size_t argc, const void *argv, uint32_t flags, void *opt, int *res);
 int sceKernelDlsym(int handle, const char *symbol, void **address);
+const char *sceKernelGetFsSandboxRandomWord(void);
 int sceAudioOutInit(void);
 int sceAudioOutOpen(int user, int type, int index, uint32_t len, uint32_t freq, uint32_t param);
 int sceAudioOutOutput(int handle, const void *data);
@@ -157,18 +158,29 @@ int g_pad = -1;
 int g_keyboard = -1;
 int g_mouse = -1;
 float g_mouseX = 960, g_mouseY = 540;
-double g_nextPadRetry = 0, g_nextMouseRetry = 0;
+double g_nextPadRetry = 0, g_nextMouseRetry = 0, g_nextKeyboardRetry = 0;
 bool g_mouseWasConnected = false, g_keyboardWasConnected = false;
 
 // Modules système qui ne sont pas chargés d'office dans le processus : un appel
-// direct par la table d'imports saute à l'adresse 0 (plantage de la touche Carré
-// du 13/10). On les charge donc nous-mêmes et on résout chaque fonction ; si
+// direct par la table d'imports saute à l'adresse 0 (plantage de la touche Carré). On les charge donc nous-mêmes et on résout chaque fonction ; si
 // quelque chose manque, la fonction est simplement indisponible.
 int loadSystemModule(const char *name) {
-    static const char *const dirs[] = {"/system/common/lib/", "/system/priv/lib/"};
-    for (const char *dir : dirs) {
-        char path[160];
-        std::snprintf(path, sizeof(path), "%s%s", dir, name);
+    // Une appli est dans un bac à sable : /system n'y existe pas forcément, les
+    // bibliothèques sont sous /<mot aléatoire>/common/lib. On essaie les deux.
+    const char *word = sceKernelGetFsSandboxRandomWord();
+    char prefixes[6][96];
+    int n = 0;
+    if (word && *word) {
+        std::snprintf(prefixes[n++], sizeof(prefixes[0]), "/%s/common/lib/", word);
+        std::snprintf(prefixes[n++], sizeof(prefixes[0]), "/%s/priv/lib/", word);
+    }
+    std::snprintf(prefixes[n++], sizeof(prefixes[0]), "/system/common/lib/");
+    std::snprintf(prefixes[n++], sizeof(prefixes[0]), "/system/priv/lib/");
+    std::snprintf(prefixes[n++], sizeof(prefixes[0]), "/system_ex/common_ex/lib/");
+    prefixes[n++][0] = 0;  // nom seul : le chargeur cherche lui-même
+    for (int i = 0; i < n; ++i) {
+        char path[192];
+        std::snprintf(path, sizeof(path), "%s%s", prefixes[i], name);
         const int h = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, nullptr);
         LOG("ps5: module %s -> 0x%08x", path, static_cast<unsigned>(h));
         if (h >= 0) return h;
@@ -447,9 +459,18 @@ void pollInput(InputState &out) {
 
     KeyboardState &k = out.keyboard;
     k = KeyboardState{};
+    if (g_kb.open && g_keyboard < 0 && nowSeconds() >= g_nextKeyboardRetry) {
+        g_nextKeyboardRetry = nowSeconds() + 2.0;
+        int junk = 0;
+        g_keyboard = g_kb.open(g_user, 0, 0, &junk);
+        if (g_keyboard >= 0) LOG("ps5: clavier ouvert (handle %d)", g_keyboard);
+    }
     if (g_keyboard >= 0 && g_kb.read) {
         SonyKeyboardData d{};
-        const bool ok = g_kb.read(g_keyboard, &d) == 0 && d.available;
+        const int rr = g_kb.read(g_keyboard, &d);
+        const bool ok = rr == 0 && d.available;
+        static int diag = 0;
+        if (diag < 5 && (++diag, true)) LOG("ps5: lecture clavier = 0x%08x, dispo %d", static_cast<unsigned>(rr), d.available);
         if (ok != g_keyboardWasConnected) {
             LOG("ps5: clavier %s", ok ? "connecte" : "deconnecte");
             g_keyboardWasConnected = ok;
@@ -472,6 +493,8 @@ void pollInput(InputState &out) {
         SonyMouseData data[16];
         std::memset(data, 0, sizeof(data));
         const int n = g_ms.read(g_mouse, data, 16);
+        static int diag = 0;
+        if (diag < 5 && (++diag, true)) LOG("ps5: lecture souris = %d (connectee %d)", n, n > 0 ? data[0].connected : -1);
         bool connected = g_mouseWasConnected;
         // Vitesse : 1 compte = 1 pixel en 1080p, proportionnel au-delà.
         const float speed = g_height > 0 ? g_height / 1080.0f : 1.0f;

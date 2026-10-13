@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Serveur de log TCP. La console écoute sur un port ; le PC s'y connecte
-// (tools/logrecv.py <ip-de-la-ps5>) et reçoit tout l'historique puis le direct.
-// Choix d'un serveur côté console : Tao connaît déjà l'IP de la PS5 (il y envoie
-// les payloads), il n'y a donc rien à configurer dans l'application.
+// Journal par TCP (option « Infos techniques ») : la console écoute sur un port,
+// un PC s'y connecte (par ex. `nc <ip-de-la-ps5> 9025`) et reçoit tout
+// l'historique puis le direct. Rien à configurer dans l'application.
 #pragma once
 
 #include <cstdint>

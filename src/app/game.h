@@ -115,6 +115,7 @@ public:
     // 2 prête, 3 échec.
     int introTrackState() const { return introTrackState_.load(); }
     bool playIntroTrack();
+    bool introTrackPlaying() const { return introTrackPlaying_; }
 
     // Scores locaux.
     std::vector<LocalScore> scoresFor(const std::string &key) const;
@@ -184,6 +185,8 @@ private:
     float lastMouseX_ = -1, lastMouseY_ = -1;
     bool touchWasDown_ = false;
     bool mouseActive_ = false;
+    bool padPointer_ = false;  // le pointeur suit le stick droit (menus)
+    float pointerX_ = -1, pointerY_ = -1;
     float touchLastX_ = 0, touchLastY_ = 0;
     double lastFrame_ = -1;
     double fpsAccum_ = 0;

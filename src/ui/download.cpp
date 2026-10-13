@@ -263,14 +263,19 @@ public:
         const bool empty = query_.empty();
         const std::string shown = empty ? (plat::textInputSupported() ? "rechercher (Carré)..." : "rechercher (clavier)...") : query_ + (plat::textInputSupported() ? "" : "_");
         c.fonts->regular.drawMid(b, bx + 44 * U, sy + 38 * U, 20 * U, empty ? pal.light4 : col::white, shown.c_str());
+        if (plat::textInputSupported()) padGlyph(c, Pad::Square, bx + bw - 22 * U, sy + 38 * U, 22 * U);
         // Onglets de tri.
         c.fonts->semibold.drawMid(b, bx, tabsY() + 15 * U, 15 * U, pal.content2, "Tri");
+        // L1 / R1 de part et d'autre des onglets : on voit tout de suite comment changer de tri.
+        padGlyph(c, Pad::L1, tabX(0) - 16 * U, tabsY() + 15 * U, 20 * U);
         for (int i = 0; i < 3; ++i) {
             const bool sel = i == tab_;
             const float tx = tabX(i), tw = tabW(i);
-            if (sel) b.roundRect(tx, tabsY(), tw, 30 * U, 15 * U, pal.background1);
+            const bool hov = game.input().hover(tx, tabsY(), tw, 30 * U);
+            if (sel || hov) b.roundRect(tx, tabsY(), tw, 30 * U, 15 * U, sel ? pal.background1 : alpha(pal.background1, 0.5f));
             c.fonts->semibold.drawMid(b, tx + tw / 2, tabsY() + 15 * U, 16 * U, sel ? col::white : pal.light2, kTabs[i], gfx::Align::Center);
         }
+        padGlyph(c, Pad::R1, tabX(2) + tabW(2) + 16 * U, tabsY() + 15 * U, 20 * U);
         char line[64];
         snprintf(line, sizeof(line), "%zu maps", results_.size());
         c.fonts->regular.drawMid(b, bx + bw, tabsY() + 15 * U, 16 * U, pal.content2, line, gfx::Align::Right);
@@ -293,6 +298,7 @@ public:
         hint(Pad::R2, "début / fin");
         hint(Pad::Triangle, "actualiser");
         hint(Pad::Circle, "fermer");
+        c.fonts->regular.drawMid(b, kVW - kMargin, fy + 8 * U, 15 * U, pal.content2, "stick droit : pointeur", gfx::Align::Right);
         b.popTransform();
     }
 
@@ -301,7 +307,7 @@ private:
     float tabsY() const { return game.toolbar.bottom(game.ctx) + 72 * lz::U + 72 * lz::U; }
     float tabW(int i) const { return game.ctx.fonts->semibold.measure(16 * U, kTabs[i]) + 30 * U; }
     float tabX(int i) const {
-        float x = kMargin + 40 * U;
+        float x = kMargin + 64 * U;
         for (int k = 0; k < i; ++k) x += tabW(k) + 6 * U;
         return x;
     }

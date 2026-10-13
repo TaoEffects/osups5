@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <thread>
 
 #include "core/log.h"
@@ -58,6 +59,9 @@ bool init(const InitParams &params) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#if defined(__APPLE__)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     // Fenêtre à la moitié de la résolution demandée : le rendu travaille en
     // coordonnées virtuelles et s'adapte à la taille réelle.
@@ -238,13 +242,48 @@ void audioStop() {
 
 int audioBlockFrames() { return g_audioBlock; }
 
-const char *writableDir() { return "."; }
+// Données (réglages, maps, skins) : RHYTHM_DATA, sinon le dossier de l'utilisateur
+// (~/.local/share, ~/Library/Application Support, %APPDATA%).
+const char *writableDir() {
+    static std::string dir;
+    if (dir.empty()) {
+        const char *env = getenv("RHYTHM_DATA");
+        if (env && *env) {
+            dir = env;
+        } else if (char *pref = SDL_GetPrefPath("rhythm", "rhythm-ps5")) {
+            dir = pref;
+            SDL_free(pref);
+            while (dir.size() > 1 && (dir.back() == '/' || dir.back() == '\\')) dir.pop_back();
+        } else {
+            dir = ".";
+        }
+    }
+    return dir.c_str();
+}
 bool textInputSupported() { return false; }
 bool startTextInput(const char *, const std::string &) { return false; }
 int pollTextInput(std::string &) { return 0; }
+// Ressources : RHYTHM_ASSETS, sinon « assets » à côté de l'exécutable (paquets
+// macOS / Windows), sinon celles du dépôt.
 const char *assetsDir() {
-    const char *env = getenv("RHYTHM_ASSETS");
-    return env && *env ? env : RHYTHM_ASSETS_DIR;
+    static std::string dir;
+    if (dir.empty()) {
+        const char *env = getenv("RHYTHM_ASSETS");
+        if (env && *env) {
+            dir = env;
+        } else {
+            if (char *base = SDL_GetBasePath()) {
+                const std::string candidate = std::string(base) + "assets";
+                SDL_free(base);
+                if (FILE *f = fopen((candidate + "/fonts/Outfit-Regular.ttf").c_str(), "rb")) {
+                    fclose(f);
+                    dir = candidate;
+                }
+            }
+            if (dir.empty()) dir = RHYTHM_ASSETS_DIR;
+        }
+    }
+    return dir.c_str();
 }
 
 void notify(const char *message) { LOG("notification: %s", message); }

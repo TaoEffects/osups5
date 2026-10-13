@@ -50,7 +50,7 @@ const char *const kTips[] = {
     "Les maps se téléchargent directement depuis l'écran « Télécharger ».",
     "Après une partie, le jeu peut corriger ton décalage audio tout seul.",
     "Clique sur le logo pour lancer la sélection de map.",
-    "Le 120 Hz s'active dans les options (relance nécessaire).",
+    "Le stick droit sert de pointeur dans les menus : Croix pour cliquer.",
 };
 
 class MainMenu : public Screen {
@@ -160,10 +160,10 @@ public:
                 }
             }
             // Au rythme, l'icône survolée sautille.
-            // Sur un morceau rapide, on saute des temps pour garder au moins ~600 ms
-            // par mouvement (sinon l'icône s'agite trop vite).
+            // Un mouvement par temps ; on ne saute des temps que sur les morceaux très
+            // rapides (moins de 300 ms par temps), sinon l'icône s'agite trop.
             int every = 1;
-            while (c.beatLength * every < 600 && every < 8) every *= 2;
+            while (c.beatLength * every < 300 && every < 8) every *= 2;
             if (h && c.trackRunning && c.beatIndexEarly != b.lastBeat && c.beatIndexEarly % every == 0) {
                 b.lastBeat = c.beatIndexEarly;
                 const double d = c.beatLength * every / 2;
@@ -383,7 +383,8 @@ private:
     void updateTicker() {
         Context &c = game.ctx;
         const game::SetInfo *s = game.currentSet();
-        const std::string key = s ? s->folder : "";
+        // Pendant « triangles », aucune map n'est jouée : rien à afficher.
+        const std::string key = game.introTrackPlaying() ? "#intro" : s ? s->folder : "";
         if (key != tickerKey_ && c.music->playing()) {
             tickerKey_ = key;
             tickerStart_ = ms(c);
@@ -393,7 +394,7 @@ private:
     void drawTicker() {
         Context &c = game.ctx;
         const game::SetInfo *s = game.currentSet();
-        if (!s || tickerKey_.empty()) return;
+        if (!s || tickerKey_.empty() || tickerKey_ == "#intro") return;
         const double dt = ms(c) - tickerStart_;
         float a = 0;
         if (dt < 400) a = static_cast<float>(dt / 400);

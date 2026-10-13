@@ -26,9 +26,3 @@ target_compile_options(rhythm-ps5 PRIVATE -Wall -Wextra -fno-omit-frame-pointer)
 target_compile_definitions(rhythm-ps5 PRIVATE RHYTHM_ASSETS_DIR="${CMAKE_SOURCE_DIR}/ps5/assets")
 target_link_libraries(rhythm-ps5 PRIVATE PkgConfig::SDL2 PkgConfig::CURL OpenGL::GL Threads::Threads)
 
-# Test du lecteur de beatmaps : ./build/pc/beatmap-test fichier.osu...
-add_executable(beatmap-test tests/beatmap_test.cpp src/game/beatmap.cpp src/core/fsutil.cpp src/core/log.cpp
-  src/platform/platform_sdl2.cpp)
-target_include_directories(beatmap-test PRIVATE src third_party)
-target_compile_definitions(beatmap-test PRIVATE RHYTHM_ASSETS_DIR="${CMAKE_SOURCE_DIR}/ps5/assets")
-target_link_libraries(beatmap-test PRIVATE PkgConfig::SDL2 OpenGL::GL Threads::Threads)

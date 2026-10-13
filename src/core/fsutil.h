@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Petits utilitaires de fichiers. Particularité PS5 : opendir() est refusé (EPERM)
-// dans le sandbox d'une appli native (test du 13/10/2026), d'où le repli sur
+// dans le sandbox d'une appli native , d'où le repli sur
 // getdents() pour lister un dossier.
 #pragma once
 

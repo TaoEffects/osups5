@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Rendu 2D par lots. Tous les quads d'une image sont accumulés côté CPU puis envoyés
 // au GPU en UN seul transfert ; un appel de dessin n'est émis que lorsque la texture
-// change. C'est le point 3 du brief : sans regroupement, le portage de Half-Life
+// change. Sans regroupement, le portage de Half-Life
 // tournait à ~1 FPS sur PS5.
 #pragma once
 

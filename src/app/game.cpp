@@ -143,14 +143,14 @@ bool Game::init() {
     settings_.load(ctx.dataDir + "/settings.cfg");
     lz::setUiScale(settings_.uiScale);
 
-    // Dossier des maps : /data est inscriptible sur la console de test (12.70) ;
+    // Dossier des maps : /data est inscriptible sur les consoles jailbreakées ;
     // sinon on se rabat sur /download0.
 #if defined(__PROSPERO__)
     ctx.songsDir = "/data/rhythm-ps5/songs";
     if (!fsu::makeDirs(ctx.songsDir) || !fsu::isDir(ctx.songsDir)) ctx.songsDir = ctx.dataDir + "/songs";
 #else
     const char *env = getenv("RHYTHM_SONGS");
-    ctx.songsDir = env && *env ? env : "songs";
+    ctx.songsDir = env && *env ? env : ctx.dataDir + "/songs";
 #endif
     fsu::makeDirs(ctx.songsDir);
     LOG("game: maps dans %s", ctx.songsDir.c_str());
@@ -230,26 +230,6 @@ bool Game::init() {
             else introTrackState_.store(3);
         }
     }
-#if !defined(__PROSPERO__)
-    // Tests sur PC : RHYTHM_TEST=results ouvre directement un écran de résultats factice.
-    if (const char *test = getenv("RHYTHM_TEST"); test && std::string(test) == "results") {
-        game::PlayResult r;
-        r.score = 734512;
-        r.accuracy = 0.9612;
-        r.maxCombo = 412;
-        r.n300 = 380;
-        r.n100 = 21;
-        r.n50 = 3;
-        r.nMiss = 2;
-        r.rank = "S";
-        r.completed = true;
-        r.unstableRate = 142.3;
-        r.meanError = -12.4;
-        logo.opacity.snap(0);
-        goTo(makeResults(r));
-        return true;
-    }
-#endif
     goTo(makeIntro());
     return true;
 }
@@ -670,8 +650,11 @@ UiInput Game::buildInput(const plat::InputState &raw) {
         if (lastMouseX_ >= 0) {
             cursorX_ = raw.mouse.x * kVW / static_cast<float>(std::max(1, plat::width()));
             cursorY_ = raw.mouse.y * kVH / static_cast<float>(std::max(1, plat::height()));
+            pointerX_ = cursorX_;
+            pointerY_ = cursorY_;
             in.mouseMoved = true;
             mouseActive_ = true;
+            padPointer_ = false;
         }
         lastMouseX_ = raw.mouse.x;
         lastMouseY_ = raw.mouse.y;
@@ -705,17 +688,42 @@ UiInput Game::buildInput(const plat::InputState &raw) {
     const float mag = std::sqrt(p.lx * p.lx + p.ly * p.ly);
     in.stickActive = mag > 0.6f;
     in.stickAngle = std::atan2(p.ly, p.lx);
-    in.anyKey = (p.buttons & ~pp.buttons) != 0;
-    for (int k = 4; k < 232 && !in.anyKey; ++k) in.anyKey = keyPressed(k);
-    // Souris : active dès qu'elle bouge ou clique, inactive dès qu'on utilise manette ou flèches.
-    if (in.mouseClick || in.wheel != 0) mouseActive_ = true;
-    if (dir != 0 || in.anyKey) mouseActive_ = false;
-    if (raw.mouse.connected) {
-        in.mouseX = raw.mouse.x * kVW / static_cast<float>(std::max(1, plat::width()));
-        in.mouseY = raw.mouse.y * kVH / static_cast<float>(std::max(1, plat::height()));
+    // Hors partie, le stick droit déplace un pointeur (comme une souris) : tout ce
+    // qui se clique (mods, au hasard, options, logo, onglets, recherche...) devient
+    // accessible ; Croix clique tant que le pointeur est affiché.
+    const bool menus = !(screen_ && screen_->gameplay()) || overlay_;
+    if (menus) {
+        const float px = deadzone(p.rx, 0.15f, 1.6f), py = deadzone(p.ry, 0.15f, 1.6f);
+        if (px != 0 || py != 0) {
+            if (!mouseActive_) {
+                // Réapparaît là où il était (ou au centre au premier usage).
+                if (pointerX_ < 0) pointerX_ = kVW / 2, pointerY_ = kVH / 2;
+            }
+            pointerX_ = std::clamp(pointerX_ + px * 1500 * lz::U * dt, 0.0f, kVW);
+            pointerY_ = std::clamp(pointerY_ + py * 1500 * lz::U * dt, 0.0f, kVH);
+            mouseActive_ = true;
+            padPointer_ = true;
+            in.mouseMoved = true;
+        }
+        if (padPointer_ && mouseActive_ && padPressed(plat::kPadCross)) {
+            in.mouseClick = true;
+            in.confirm = false;
+        }
+    } else {
+        padPointer_ = false;
     }
-    in.mouseActive = mouseActive_ && raw.mouse.connected;
-    if (in.mouseClick) mouseActive_ = true, in.mouseActive = raw.mouse.connected;
+    const uint32_t newButtons = p.buttons & ~pp.buttons & ~(padPointer_ ? plat::kPadCross : 0u);
+    in.anyKey = newButtons != 0;
+    for (int k = 4; k < 232 && !in.anyKey; ++k) in.anyKey = keyPressed(k);
+    // Pointeur : actif dès que la souris (ou le stick droit) bouge ou clique,
+    // masqué dès qu'on navigue à la croix, au stick gauche ou aux flèches.
+    if (in.mouseClick || in.wheel != 0) mouseActive_ = true;
+    if (dir != 0 || in.anyKey) mouseActive_ = false, padPointer_ = false;
+    if (pointerX_ < 0) pointerX_ = kVW / 2, pointerY_ = kVH / 2;
+    in.mouseX = pointerX_;
+    in.mouseY = pointerY_;
+    in.mouseActive = mouseActive_ && (raw.mouse.connected || padPointer_);
+    if (in.mouseClick && (raw.mouse.connected || padPointer_)) mouseActive_ = true, in.mouseActive = true;
     prev_ = raw;
     return in;
 }

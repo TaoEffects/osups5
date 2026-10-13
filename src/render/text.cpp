@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "render/text.h"
 
+#include <cstdlib>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -57,6 +59,102 @@ struct FontFile {
     }
 };
 
+
+// Champ de distance calculé depuis un rendu suréchantillonné (x4) du glyphe.
+// stbtt_GetGlyphSDF mesure la distance à chaque contour séparément : quand une
+// police dessine une lettre en formes qui se chevauchent (barre du « t »
+// d'Outfit Bold), des coutures apparaissent à l'intérieur. Le rendu bitmap, lui,
+// fusionne les formes (règle non nulle) ; la distance euclidienne exacte
+// (Felzenszwalb) donne ensuite un champ propre. Même convention que stb :
+// valeur kOnEdge sur le contour, plus grande à l'intérieur, libérée par free().
+void edt1d(const float *f, int n, float *d, int *v, float *z) {
+    int k = 0;
+    v[0] = 0;
+    z[0] = -1e20f;
+    z[1] = 1e20f;
+    for (int q = 1; q < n; ++q) {
+        float sx = ((f[q] + static_cast<float>(q * q)) - (f[v[k]] + static_cast<float>(v[k] * v[k]))) / static_cast<float>(2 * q - 2 * v[k]);
+        while (sx <= z[k]) {
+            --k;
+            sx = ((f[q] + static_cast<float>(q * q)) - (f[v[k]] + static_cast<float>(v[k] * v[k]))) / static_cast<float>(2 * q - 2 * v[k]);
+        }
+        ++k;
+        v[k] = q;
+        z[k] = sx;
+        z[k + 1] = 1e20f;
+    }
+    k = 0;
+    for (int q = 0; q < n; ++q) {
+        while (z[k + 1] < static_cast<float>(q)) ++k;
+        const float dq = static_cast<float>(q - v[k]);
+        d[q] = dq * dq + f[v[k]];
+    }
+}
+
+void edt2d(std::vector<float> &grid, int w, int h) {
+    const int n = std::max(w, h);
+    std::vector<float> f(static_cast<size_t>(n)), d(static_cast<size_t>(n)), z(static_cast<size_t>(n) + 1);
+    std::vector<int> v(static_cast<size_t>(n));
+    for (int x = 0; x < w; ++x) {
+        for (int y = 0; y < h; ++y) f[static_cast<size_t>(y)] = grid[static_cast<size_t>(y) * w + x];
+        edt1d(f.data(), h, d.data(), v.data(), z.data());
+        for (int y = 0; y < h; ++y) grid[static_cast<size_t>(y) * w + x] = d[static_cast<size_t>(y)];
+    }
+    for (int y = 0; y < h; ++y) {
+        float *row = &grid[static_cast<size_t>(y) * w];
+        std::copy(row, row + w, f.begin());
+        edt1d(f.data(), w, d.data(), v.data(), z.data());
+        std::copy(d.begin(), d.begin() + w, row);
+    }
+}
+
+unsigned char *glyphSdf(const stbtt_fontinfo *info, float scale, int index, int *outW, int *outH, int *outX, int *outY) {
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    stbtt_GetGlyphBitmapBox(info, index, scale, scale, &x0, &y0, &x1, &y1);
+    if (x1 <= x0 || y1 <= y0) return nullptr;
+    constexpr int ss = 4;
+    const int w = x1 - x0 + 2 * kPad, h = y1 - y0 + 2 * kPad;
+    const int xoff = x0 - kPad, yoff = y0 - kPad;
+    const int W = w * ss, H = h * ss;
+    int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+    stbtt_GetGlyphBitmapBox(info, index, scale * ss, scale * ss, &hx0, &hy0, &hx1, &hy1);
+    const int bw = hx1 - hx0, bh = hy1 - hy0;
+    std::vector<unsigned char> cover(static_cast<size_t>(bw) * bh, 0);
+    stbtt_MakeGlyphBitmap(info, cover.data(), bw, bh, bw, scale * ss, scale * ss, index);
+    // Masque intérieur dans la grande grille (le glyphe placé à sa position).
+    const int ox = hx0 - xoff * ss, oy = hy0 - yoff * ss;
+    std::vector<uint8_t> inside(static_cast<size_t>(W) * H, 0);
+    for (int y = 0; y < bh; ++y)
+        for (int x = 0; x < bw; ++x) {
+            const int gx = x + ox, gy = y + oy;
+            if (gx >= 0 && gy >= 0 && gx < W && gy < H && cover[static_cast<size_t>(y) * bw + x] >= 128)
+                inside[static_cast<size_t>(gy) * W + gx] = 1;
+        }
+    constexpr float kInf = 1e20f;
+    std::vector<float> toIn(static_cast<size_t>(W) * H), toOut(static_cast<size_t>(W) * H);
+    for (size_t i = 0; i < inside.size(); ++i) {
+        toIn[i] = inside[i] ? 0 : kInf;
+        toOut[i] = inside[i] ? kInf : 0;
+    }
+    edt2d(toIn, W, H);
+    edt2d(toOut, W, H);
+    unsigned char *out = static_cast<unsigned char *>(malloc(static_cast<size_t>(w) * h));
+    if (!out) return nullptr;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const size_t i = static_cast<size_t>(y * ss + ss / 2) * W + static_cast<size_t>(x * ss + ss / 2);
+            // Distance signée au contour, en pixels de l'atlas (positive dedans).
+            const float d = inside[i] ? (std::sqrt(toOut[i]) - 0.5f) / ss : -(std::sqrt(toIn[i]) - 0.5f) / ss;
+            const float val = static_cast<float>(kOnEdge) + d * kDistScale;
+            out[static_cast<size_t>(y) * w + x] = static_cast<unsigned char>(std::clamp(val, 0.0f, 255.0f));
+        }
+    *outW = w;
+    *outH = h;
+    *outX = xoff;
+    *outY = yoff;
+    return out;
+}
+
 }  // namespace
 
 bool Font::load(const std::string &path, const std::string &fallbackPath, bool allGlyphs) {
@@ -111,7 +209,7 @@ bool Font::load(const std::string &path, const std::string &fallbackPath, bool a
             b.g.index = index;
             b.g.fallback = f == &fb;
             int xoff = 0, yoff = 0;
-            b.pixels = stbtt_GetGlyphSDF(&f->info, f->scale, index, kPad, kOnEdge, kDistScale, &b.w, &b.h, &xoff, &yoff);
+            b.pixels = glyphSdf(&f->info, f->scale, index, &b.w, &b.h, &xoff, &yoff);
             b.g.x0 = static_cast<float>(xoff);
             b.g.y0 = static_cast<float>(yoff) + ascent_;
             b.g.x1 = b.g.x0 + static_cast<float>(b.w);
@@ -150,7 +248,7 @@ bool Font::load(const std::string &path, const std::string &fallbackPath, bool a
             b.g.v0 = static_cast<float>(py) / static_cast<float>(atlasH);
             b.g.u1 = static_cast<float>(px + b.w) / atlasW;
             b.g.v1 = static_cast<float>(py + b.h) / static_cast<float>(atlasH);
-            stbtt_FreeSDF(b.pixels, nullptr);
+            free(b.pixels);
         } else {
             b.g.x1 = b.g.x0;  // espace : rien à dessiner
         }
@@ -317,7 +415,7 @@ const Font::Glyph *GlyphCache::get(unsigned cp) {
     g.fallback = true;
     g.tex = &atlas_;
     int w = 0, h = 0, xoff = 0, yoff = 0;
-    unsigned char *px = stbtt_GetGlyphSDF(info, scale_, index, kPad, kOnEdge, kDistScale, &w, &h, &xoff, &yoff);
+    unsigned char *px = glyphSdf(info, scale_, index, &w, &h, &xoff, &yoff);
     g.x0 = static_cast<float>(xoff);
     g.y0 = static_cast<float>(yoff) + ascent_;
     g.x1 = g.x0 + static_cast<float>(w);
@@ -342,7 +440,7 @@ const Font::Glyph *GlyphCache::get(unsigned cp) {
         g.v1 = static_cast<float>(penY_ + h) / kSize;
         penX_ += w + 1;
         shelf_ = std::max(shelf_, h);
-        stbtt_FreeSDF(px, nullptr);
+        free(px);
     } else {
         g.x1 = g.x0;
     }
