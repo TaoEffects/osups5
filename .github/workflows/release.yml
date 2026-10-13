@@ -35,7 +35,7 @@ jobs:
         run: |
           export PKG_CONFIG_PATH="$(brew --prefix curl)/lib/pkgconfig:$PKG_CONFIG_PATH"
           cmake -S . -B build/mac -G Ninja -DCMAKE_BUILD_TYPE=Release
-          ninja -C build/mac rhythm-ps5
+          ninja -k 0 -C build/mac rhythm-ps5
       - name: Paquet
         run: |
           mkdir -p dist/rhythm-ps5-macos

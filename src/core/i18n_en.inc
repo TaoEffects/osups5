@@ -178,7 +178,7 @@
 {"Relance l'assistant du premier lancement (maps de base, façon de jouer...).", "Runs the first-launch wizard again (starter beatmaps, how you play...)."},
 {"Ouvrir", "Open"},
 {"Infos techniques", "Technical info"},
-{"Affiche les images par seconde et active le journal réseau (au prochain lancement).", "Shows frames per second and enables the network log (on next launch)."},
+{"Affiche les images par seconde et attend 3 s au lancement que le journal réseau se connecte.", "Shows frames per second and waits 3 s at launch for the network log to connect."},
 {"Automatique (langue de la console)", "Automatic (console language)"},
 {"Langue de l'interface.", "Interface language."},
 {"Mappeur", "Mapper"},
