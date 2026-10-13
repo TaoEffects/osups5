@@ -41,8 +41,10 @@ int main() {
     // Réglages lus tôt : fréquence d'affichage et journal réseau (option « Infos techniques »).
     Settings early;
     early.load(std::string(plat::writableDir()) + "/settings.cfg");
+    // Journal réseau toujours à l'écoute (un PC peut s'y connecter à tout moment et
+    // reçoit tout l'historique) ; notification et attente seulement avec « Infos techniques ».
+    netlog::start(kLogPort);
     if (early.showDebug) {
-        netlog::start(kLogPort);
         if (kWaitForLogClient > 0) {
             char msg[160];
             snprintf(msg, sizeof(msg), "rhythm-ps5 : journal sur %s:%u", netlog::localAddress(), kLogPort);

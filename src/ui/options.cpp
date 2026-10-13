@@ -515,7 +515,7 @@ private:
                               game.goTo(game.makeFirstRun());
                           },
                           nullptr, nullptr});
-        toggle("Divers", "Infos techniques", "Affiche les images par seconde et active le journal réseau (au prochain lancement).", s.showDebug);
+        toggle("Divers", "Infos techniques", "Affiche les images par seconde et attend 3 s au lancement que le journal réseau se connecte.", s.showDebug);
         sections_.clear();
         for (const Item &it : items_)
             if (sections_.empty() || sections_.back() != it.section) sections_.push_back(it.section);
