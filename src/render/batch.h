@@ -37,6 +37,16 @@ void updateTexture(const Texture &texture, const uint8_t *rgbaPixels);
 // Premultiplied : pour composer une cible de rendu (couleur déjà multipliée par alpha).
 enum class Blend : uint8_t { Alpha, Additive, Premultiplied };
 
+// Cible multiéchantillonnée (MSAA) : on dessine toute l'image dedans, puis on la
+// "résout" vers l'écran. Supprime l'aliasing des bords (quads inclinés, traits...).
+struct MsaaTarget {
+    GLuint fbo = 0, color = 0;
+    int width = 0, height = 0, samples = 0;
+    bool create(int width, int height, int samples);
+    void destroy();
+    void resolveToScreen() const;
+};
+
 // Cible de rendu hors écran (texture couleur RGBA).
 struct RenderTarget {
     GLuint fbo = 0;
@@ -77,6 +87,8 @@ public:
     Blend blend() const { return blend_; }
     // Change de cible (nullptr = écran). Vide le lot en cours.
     void setTarget(const RenderTarget *target);
+    // Framebuffer qui fait office d'"écran" (MSAA), 0 = écran réel.
+    void setScreenFramebuffer(GLuint fbo) { screenFbo_ = fbo; }
     void outline(float x, float y, float w, float h, float thickness, uint32_t color);
     void end();
 
@@ -110,6 +122,7 @@ private:
     float virtualW_ = 1, virtualH_ = 1;
     int viewportW_ = 1, viewportH_ = 1;
     Blend blend_ = Blend::Alpha;
+    GLuint screenFbo_ = 0;
     void push(const Texture &tex, const Vertex v[4]);
 };
 

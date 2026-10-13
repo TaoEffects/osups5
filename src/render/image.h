@@ -35,7 +35,8 @@ public:
         bool ok;
         Texture texture;
     };
-    void start();
+    // Démarre `threads` décodeurs ; cacheDir (optionnel) garde les images réduites sur disque.
+    void start(int threads = 3, const std::string &cacheDir = "");
     void stop();
     // blurRadius > 0 : flou (fonds de menus), appliqué après réduction.
     uint64_t request(const std::string &path, int maxDim, int blurRadius = 0);
@@ -58,7 +59,8 @@ private:
     std::mutex mutex_;
     std::deque<Job> jobs_;
     std::deque<Result> results_;
-    pthread_t thread_{};
+    std::vector<pthread_t> threads_;
+    std::string cacheDir_;
     bool running_ = false;
     uint64_t next_ = 1;
 };

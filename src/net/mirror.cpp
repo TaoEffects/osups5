@@ -23,12 +23,16 @@ void Mirror::start(const std::string &baseUrl, const std::string &songsDir) {
     songsDir_ = songsDir;
     running_.store(true);
     thr::start(thread_, threadMain, this, "miroir", 1024 * 1024);
+    coverThreads_.resize(4);
+    for (pthread_t &t : coverThreads_) thr::start(t, coverMain, this, "vignettes", 1024 * 1024);
 }
 
 void Mirror::stop() {
     if (!running_.exchange(false)) return;
     cancelAll_.store(true);
     pthread_join(thread_, nullptr);
+    for (pthread_t &t : coverThreads_) pthread_join(t, nullptr);
+    coverThreads_.clear();
 }
 
 void Mirror::search(const std::string &query, Sort sort, int page) {
@@ -85,6 +89,35 @@ void *Mirror::threadMain(void *self) {
     return nullptr;
 }
 
+void *Mirror::coverMain(void *self) {
+    static_cast<Mirror *>(self)->coverLoop();
+    return nullptr;
+}
+
+void Mirror::coverLoop() {
+    while (running_.load()) {
+        std::pair<int, std::string> cover{0, ""};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!coverJobs_.empty()) {
+                cover = coverJobs_.front();  // dans l'ordre de la liste (haut de page d'abord)
+                coverJobs_.pop_front();
+            }
+        }
+        if (!cover.first) {
+            usleep(15000);
+            continue;
+        }
+        Response r = get(cover.second, 4u << 20, nullptr, &cancelAll_);
+        if (!r.ok()) continue;
+        gfx::ImageData img;
+        if (gfx::decodeImageMemory(r.body.data(), r.body.size(), 800, img)) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            covers_.emplace_back(cover.first, std::move(img));
+        }
+    }
+}
+
 void Mirror::loop() {
     while (running_.load()) {
         bool doSearchNow = false;
@@ -97,26 +130,12 @@ void Mirror::loop() {
             } else if (!downloadJobs_.empty()) {
                 dl = downloadJobs_.front();
                 downloadJobs_.pop_front();
-            } else if (!coverJobs_.empty()) {
-                // Les vignettes les plus récentes d'abord (page affichée).
-                cover = coverJobs_.back();
-                coverJobs_.pop_back();
-                if (coverJobs_.size() > 40) coverJobs_.clear();
             }
         }
         if (doSearchNow) {
             doSearch();
         } else if (dl.first) {
             doDownload(dl.first, dl.second);
-        } else if (cover.first) {
-            Response r = get(cover.second, 4u << 20);
-            if (r.ok()) {
-                gfx::ImageData img;
-                if (gfx::decodeImageMemory(r.body.data(), r.body.size(), 512, img)) {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    covers_.emplace_back(cover.first, std::move(img));
-                }
-            }
         } else {
             usleep(20000);
         }

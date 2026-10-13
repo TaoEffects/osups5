@@ -187,7 +187,7 @@ bool Game::init() {
 
     library_.setRoot(ctx.songsDir);
     library_.beginScan();
-    images_.start();
+    images_.start(3, ctx.dataDir + "/cache");
     mirror.start(settings_.mirror, ctx.songsDir);
     loadScores();
     ui::init(ctx);
@@ -215,6 +215,7 @@ void Game::shutdown() {
     fonts_.regular.shutdown();
     fonts_.semibold.shutdown();
     fonts_.bold.shutdown();
+    msaa_.destroy();
     batch_.shutdown();
 }
 
@@ -556,6 +557,11 @@ void Game::frame(const plat::InputState &raw, double now) {
     }
     if (screen_ && !next_) screen_->update(in);
 
+    // Rendu dans la cible MSAA (recréée si la taille change), résolue à la fin.
+    if (msaa_.fbo && (msaa_.width != plat::width() || msaa_.height != plat::height())) msaa_.destroy();
+    if (!msaa_.fbo && !msaaFailed_) msaaFailed_ = !msaa_.create(plat::width(), plat::height(), 4);
+    batch_.setScreenFramebuffer(msaa_.fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, msaa_.fbo);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
     batch_.begin(kVW, kVH, plat::width(), plat::height());
@@ -581,4 +587,5 @@ void Game::frame(const plat::InputState &raw, double now) {
         fonts_.regular.drawShadow(batch_, 12, kVH - 30, 20, gfx::rgba(200, 255, 200), line);
     }
     batch_.end();
+    if (msaa_.fbo) msaa_.resolveToScreen();
 }

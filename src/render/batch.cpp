@@ -102,6 +102,40 @@ bool RenderTarget::create(int width, int height) {
     return ok;
 }
 
+bool MsaaTarget::create(int w, int h, int s) {
+    width = w;
+    height = h;
+    samples = s;
+    glGenFramebuffers(1, &fbo);
+    glGenRenderbuffers(1, &color);
+    glBindRenderbuffer(GL_RENDERBUFFER, color);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, s, GL_RGBA8, w, h);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color);
+    const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && glGetError() == GL_NO_ERROR;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!ok) {
+        LOG("gl: MSAA x%d %dx%d indisponible", s, w, h);
+        destroy();
+    } else {
+        LOG("gl: MSAA x%d %dx%d actif", s, w, h);
+    }
+    return ok;
+}
+
+void MsaaTarget::destroy() {
+    if (fbo) glDeleteFramebuffers(1, &fbo);
+    if (color) glDeleteRenderbuffers(1, &color);
+    fbo = color = 0;
+}
+
+void MsaaTarget::resolveToScreen() const {
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void RenderTarget::destroy() {
     if (fbo) glDeleteFramebuffers(1, &fbo);
     fbo = 0;
@@ -196,7 +230,7 @@ void SpriteBatch::begin(float virtualW, float virtualH, int viewportW, int viewp
     viewportH_ = viewportH;
     blend_ = Blend::Alpha;
     offsetY_ = 1.0f;
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, screenFbo_);
     glViewport(0, 0, viewportW, viewportH);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
@@ -261,7 +295,7 @@ void SpriteBatch::setTarget(const RenderTarget *target) {
         scaleY_ = 2.0f / virtualH_;
         offsetY_ = -1.0f;
     } else {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, screenFbo_);
         glViewport(0, 0, viewportW_, viewportH_);
         scaleY_ = -2.0f / virtualH_;
         offsetY_ = 1.0f;

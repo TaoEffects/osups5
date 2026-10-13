@@ -66,13 +66,16 @@ public:
 
 private:
     static void *threadMain(void *self);
+    static void *coverMain(void *self);
     void loop();
+    void coverLoop();
     void doSearch();
     void doDownload(const std::shared_ptr<DownloadState> &d, const RemoteSet &set);
 
     std::string base_, songsDir_;
     std::mutex mutex_;
     pthread_t thread_{};
+    std::vector<pthread_t> coverThreads_;
     std::atomic<bool> running_{false};
     std::atomic<bool> cancelAll_{false};  // vrai à l'arrêt de l'appli
 
