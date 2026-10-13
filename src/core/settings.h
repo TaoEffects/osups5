@@ -9,6 +9,7 @@ struct Settings {
     int refreshHz = 120;           // 120 (si l'écran suit, sinon la console reste en 60) ou 60 forcé
     float backgroundDim = 0.75f;   // assombrissement du fond en jeu (0..1)
     bool showDebug = false;
+    int language = 0;              // 0 langue de la console, 1 français, 2 anglais
     bool showHitErrorBar = true;
     // Son
     float masterVolume = 0.8f;
@@ -35,6 +36,7 @@ struct Settings {
     // Interface
     bool menuParallax = true;
     bool introEnabled = true;
+    bool storyboard = true;        // storyboards des maps en jeu
     bool originalMetadata = false;
     float uiScale = 1.0f;           // taille de l'interface (0,8 à 1,3)
     int inputMode = 0;              // 0 manette + clavier/souris, 1 manette, 2 clavier/souris

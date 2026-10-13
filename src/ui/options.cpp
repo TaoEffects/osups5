@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "app/game.h"
+#include "core/i18n.h"
 #include "core/anim.h"
 #include "ui/lz.h"
 
@@ -46,7 +47,7 @@ std::string keyName(int k) {
     case 0xE6: return "Alt droit";
     default: {
         char b[24];
-        snprintf(b, sizeof(b), "Touche %02X", k);
+        snprintf(b, sizeof(b), i18n::tr("Touche %02X"), k);
         return b;
     }
     }
@@ -91,7 +92,7 @@ public:
         Context &c = game.ctx;
         c.saveSettings();
         if (c.settings->refreshHz != refreshAtEnter_)
-            game.toast("Fréquence " + std::to_string(c.settings->refreshHz) + " Hz : relance l'appli pour l'appliquer");
+            game.toast(i18n::tr("Fréquence ") + std::to_string(c.settings->refreshHz) + i18n::tr(" Hz : relance l'appli pour l'appliquer"));
         slide_.go(lz::ms(c), 0, 600, lz::Ease::OutQuint);
         return 600;
     }
@@ -247,6 +248,7 @@ public:
                 icon(c, fa::chevron_left, cx + cw - 38 * U, dy + dh / 2, 12 * U, pal.light2);
                 icon(c, fa::chevron_right, cx + cw - 16 * U, dy + dh / 2, 12 * U, pal.light2);
             }
+            helpWidth_ = cw;
             if (sel && it.help) wrap(it.help, cx, y + h + 6 * U, cw, 13 * U, pal.content2);
         }
         b.popClip();
@@ -289,7 +291,7 @@ private:
                 last = items_[static_cast<size_t>(k)].section;
                 y += 80 * lz::U;
             }
-            if (k < i) y += rowH(k) + (k == cursor_ ? 46 * lz::U : 8 * lz::U);
+            if (k < i) y += rowH(k) + (k == cursor_ ? helpSpace(k) : 8 * lz::U);
         }
         return y;
     }
@@ -325,10 +327,12 @@ private:
         game.ctx.play(game.ctx.sfx->uiHover);
     }
 
-    void wrap(const char *text, float x, float y, float width, float size, uint32_t color) {
+    // Dessine l'aide sur plusieurs lignes (ou les compte seulement) ; renvoie le nombre de lignes.
+    int wrap(const char *text, float x, float y, float width, float size, uint32_t color, bool draw = true) const {
         Context &c = game.ctx;
+        int lines = 0;
         std::string line, word;
-        const std::string s = std::string(text) + " ";
+        const std::string s = std::string(i18n::tr(text)) + " ";
         for (char ch : s) {
             if (ch != ' ') {
                 word += ch;
@@ -336,15 +340,27 @@ private:
             }
             const std::string candidate = line.empty() ? word : line + " " + word;
             if (c.fonts->regular.measure(size, candidate.c_str()) > width && !line.empty()) {
-                c.fonts->regular.draw(*c.batch, x, y, size, color, line.c_str());
+                if (draw) c.fonts->regular.draw(*c.batch, x, y, size, color, line.c_str());
                 y += size * 1.35f;
+                ++lines;
                 line = word;
             } else {
                 line = candidate;
             }
             word.clear();
         }
-        if (!line.empty()) c.fonts->regular.draw(*c.batch, x, y, size, color, line.c_str());
+        if (!line.empty()) {
+            if (draw) c.fonts->regular.draw(*c.batch, x, y, size, color, line.c_str());
+            ++lines;
+        }
+        return lines;
+    }
+    // Place réservée sous l'élément choisi pour son aide.
+    float helpSpace(int i) const {
+        const char *help = items_[static_cast<size_t>(i)].help;
+        if (!help) return 8 * lz::U;
+        const int n = wrap(help, 0, 0, helpWidth_, 13 * lz::U, 0, false);
+        return 14 * lz::U + static_cast<float>(n) * 13 * lz::U * 1.35f;
     }
 
     static std::string pct(float v) { return std::to_string(static_cast<int>(std::lround(v * 100))) + " %"; }
@@ -364,7 +380,7 @@ private:
     // Bouton de manette qui frappe (ou non) en jeu.
     void padButton(const char *name, unsigned bit) {
         Settings &s = *game.ctx.settings;
-        labels_.push_back(std::string("Frappe avec ") + name);
+        labels_.push_back(std::string(i18n::tr("Frappe avec ")) + name);
         items_.push_back({"Commandes", labels_.back().c_str(), "Ce bouton de la manette sert à frapper pendant les parties.",
                           Kind::Toggle,
                           [&s, bit] {
@@ -393,7 +409,7 @@ private:
                           [&s] {
                               const int real = plat::refreshHz();
                               std::string v = s.refreshHz == 120 ? "Auto (120 Hz)" : "60 Hz";
-                              if (real > 0) v += "  ·  actuel " + std::to_string(real) + " Hz";
+                              if (real > 0) v += i18n::tr("  ·  actuel ") + std::to_string(real) + " Hz";
                               return v;
                           },
                           [&s](int) { s.refreshHz = s.refreshHz == 60 ? 120 : 60; }, nullptr, nullptr});
@@ -422,6 +438,7 @@ private:
                           nullptr, nullptr});
         slider("Affichage", "Assombrissement du fond", "Assombrit l'image de fond pendant les parties pour mieux voir les cercles.",
                s.backgroundDim, 0, 1, 0.05f, [&s] { return pct(s.backgroundDim); });
+        toggle("Affichage", "Storyboards", "Animations des maps qui en ont (images, effets).", s.storyboard);
         toggle("Affichage", "Fond flou en jeu", "Floute l'image de fond pendant les parties.", s.blurInGame);
         toggle("Affichage", "Interface en jeu", "Score, précision, combo et barre de vie pendant la partie.", s.showHud);
         toggle("Affichage", "Barre d'erreur de frappe", "Affiche en bas de l'écran si tes frappes sont en avance ou en retard.",
@@ -432,6 +449,16 @@ private:
                           "arrivent bientôt.",
                           Kind::Choice, [] { return std::string("Moderne (lazer)"); },
                           [this](int) { game.toast("Les thèmes « stable » et « classique » arrivent bientôt"); }, nullptr, nullptr});
+        items_.push_back({"Interface", "Langue", "Langue de l'interface.", Kind::Choice,
+                          [&s] {
+                              return std::string(s.language == 1 ? "Français" : s.language == 2 ? "English"
+                                                                                                : "Automatique (langue de la console)");
+                          },
+                          [&s](int dir) {
+                              s.language = (s.language + (dir < 0 ? 2 : 1)) % 3;
+                              i18n::setLang(i18n::resolve(s.language, plat::systemLanguage()));
+                          },
+                          nullptr, nullptr});
         toggle("Interface", "Métadonnées d'origine",
                "Affiche les titres et artistes dans leur langue d'origine (japonais...) quand la map les fournit.",
                s.originalMetadata);
@@ -495,6 +522,7 @@ private:
     }
 
     std::vector<Item> items_;
+    mutable float helpWidth_ = 300;  // largeur du texte d'aide (mise à jour au rendu)
     std::deque<std::string> labels_;  // libellés construits (adresses stables)
     std::vector<std::string> sections_;
     int cursor_ = 0;

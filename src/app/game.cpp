@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/game.h"
+#include "core/i18n.h"
 
 #include <time.h>
 #include <unistd.h>
@@ -142,6 +143,7 @@ bool Game::init() {
     ctx.dataDir = plat::writableDir();
     settings_.load(ctx.dataDir + "/settings.cfg");
     lz::setUiScale(settings_.uiScale);
+    i18n::setLang(i18n::resolve(settings_.language, plat::systemLanguage()));
 
     // Dossier des maps : /data est inscriptible sur les consoles jailbreakées ;
     // sinon on se rabat sur /download0.
@@ -245,7 +247,7 @@ void Game::applySkin() {
             ctx.skin = &skin_;
             sfx_.loadOverrides(dir);
         } else {
-            toast("Skin illisible : " + settings_.skinName);
+            toast(i18n::tr("Skin illisible : ") + settings_.skinName);
         }
     }
 }
@@ -315,14 +317,14 @@ void Game::handleDownloads() {
             if (library_.addFolder(d->folder)) {
                 if (!d->quiet) {
                     ctx.play(sfx_.uiDownloaded);
-                    toast("Installée : " + d->label);
+                    toast(i18n::tr("Installée : ") + d->label);
                 }
                 const int idx = library_.findSet(d->folder);
                 if (idx >= 0 && selectedSet < 0) select(idx, 0, true);
             }
         } else if (!d->quiet) {
             ctx.play(sfx_.uiError);
-            toast("Échec : " + d->error);
+            toast(i18n::tr("Échec : ") + d->error);
         }
     }
 }
@@ -705,14 +707,34 @@ UiInput Game::buildInput(const plat::InputState &raw) {
             padPointer_ = true;
             in.mouseMoved = true;
         }
-        if (padPointer_ && mouseActive_ && padPressed(plat::kPadCross)) {
+        // Le pavé tactile glisse aussi le pointeur (déplacement relatif, comme un pavé
+        // de portable) ; un appui sur le pavé clique.
+        if (p.touchCount > 0) {
+            const float tx = static_cast<float>(p.touchX[0]), ty = static_cast<float>(p.touchY[0]);
+            if (ptrTouchDown_ && (tx != ptrTouchX_ || ty != ptrTouchY_)) {
+                if (pointerX_ < 0) pointerX_ = kVW / 2, pointerY_ = kVH / 2;
+                const float k = kVW / 1920.0f * 1.4f;
+                pointerX_ = std::clamp(pointerX_ + (tx - ptrTouchX_) * k, 0.0f, kVW);
+                pointerY_ = std::clamp(pointerY_ + (ty - ptrTouchY_) * k, 0.0f, kVH);
+                mouseActive_ = true;
+                padPointer_ = true;
+                in.mouseMoved = true;
+            }
+            ptrTouchX_ = tx;
+            ptrTouchY_ = ty;
+            ptrTouchDown_ = true;
+        } else {
+            ptrTouchDown_ = false;
+        }
+        if (padPointer_ && mouseActive_ && (padPressed(plat::kPadCross) || in.touchpadClick)) {
             in.mouseClick = true;
             in.confirm = false;
+            in.touchpadClick = false;
         }
     } else {
         padPointer_ = false;
     }
-    const uint32_t newButtons = p.buttons & ~pp.buttons & ~(padPointer_ ? plat::kPadCross : 0u);
+    const uint32_t newButtons = p.buttons & ~pp.buttons & ~(padPointer_ ? plat::kPadCross | plat::kPadTouchpad : 0u);
     in.anyKey = newButtons != 0;
     for (int k = 4; k < 232 && !in.anyKey; ++k) in.anyKey = keyPressed(k);
     // Pointeur : actif dès que la souris (ou le stick droit) bouge ou clique,

@@ -8,7 +8,9 @@
 #include <pthread.h>
 #include <signal.h>
 #include <sys/socket.h>
-#include <ucontext.h>
+#if !defined(__APPLE__)
+#include <ucontext.h>  // macOS : registres non lus, pas besoin
+#endif
 #include <unistd.h>
 
 #include <cstdint>

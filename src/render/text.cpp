@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/fsutil.h"
+#include "core/i18n.h"
 #include "core/log.h"
 #include "stb/stb_truetype.h"
 
@@ -292,6 +293,7 @@ float Font::kern(const Glyph *a, const Glyph *b) const {
 }
 
 float Font::measure(float size, const char *s, float spacing) const {
+    s = i18n::tr(s);  // texte affiché dans la langue choisie
     const float k = size / bakePx_;
     float w = 0;
     const Glyph *prev = nullptr;
@@ -310,6 +312,7 @@ float Font::measure(float size, const char *s, float spacing) const {
 float Font::drawSdf(SpriteBatch &batch, float x, float y, float size, uint32_t color, const char *s, Align align,
                     float spacing, float dilate, float soft) const {
     if (!loaded() || !s || (color >> 24) == 0) return 0;
+    s = i18n::tr(s);
     const float width = measure(size, s, spacing);
     if (align == Align::Center) x -= width * 0.5f;
     if (align == Align::Right) x -= width;
@@ -358,7 +361,8 @@ float Font::drawShadow(SpriteBatch &batch, float x, float y, float size, uint32_
     return draw(batch, x, y, size, color, s, align, spacing);
 }
 
-std::string Font::ellipsize(float size, const std::string &text, float maxWidth) const {
+std::string Font::ellipsize(float size, const std::string &original, float maxWidth) const {
+    const std::string text = i18n::tr(original);
     if (measure(size, text.c_str()) <= maxWidth) return text;
     std::string t = text;
     while (!t.empty()) {

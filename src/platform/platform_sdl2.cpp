@@ -244,6 +244,11 @@ int audioBlockFrames() { return g_audioBlock; }
 
 // Données (réglages, maps, skins) : RHYTHM_DATA, sinon le dossier de l'utilisateur
 // (~/.local/share, ~/Library/Application Support, %APPDATA%).
+const char *systemLanguage() {
+    const char *env = getenv("LANG");
+    return env && *env ? env : "en";
+}
+
 const char *writableDir() {
     static std::string dir;
     if (dir.empty()) {

@@ -39,6 +39,8 @@ public:
     // Renvoie false quand la partie est terminée (fin de map ou échec confirmé).
     void update(Context &ctx, const UiInput &in);
     void render(Context &ctx);
+    // Storyboard dessiné sous / au-dessus des objets (nullptr : aucun).
+    void setStoryboard(const class Storyboard *sb) { storyboard_ = sb; }
 
     void setPaused(Context &ctx, bool paused);
     bool paused() const { return paused_; }
@@ -110,6 +112,7 @@ private:
     Mods mods_;
     std::vector<State> state_;
     const gfx::Texture *background_ = nullptr;
+    const Storyboard *storyboard_ = nullptr;
     gfx::RenderTarget sliderTarget_;
 
     float cs_ = 5, ar_ = 5, od_ = 5, hpSetting_ = 5;
