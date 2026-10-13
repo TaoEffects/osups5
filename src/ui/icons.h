@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Points de code des icônes Font Awesome Free (police OFL, icônes CC BY 4.0),
+// sous-ensemble embarqué dans assets/fonts/FontAwesome-Solid.ttf.
+// Généré par tools/subset-icons.py.
+#pragma once
+
+namespace fa {
+constexpr const char *play = "\xe2\x96\xb6";
+constexpr const char *gear = "\xe2\x9a\x99";
+constexpr const char *circle_play = "\xef\x80\x9d";
+constexpr const char *download = "\xef\x80\x99";
+constexpr const char *door_open = "\xef\x94\xab";
+constexpr const char *powerOff = "\xe2\x8f\xbb";
+constexpr const char *music = "\xef\x80\x81";
+constexpr const char *clock = "\xef\x80\x97";
+constexpr const char *star = "\xe2\xad\x90";
+constexpr const char *magnifying_glass = "\xef\x80\x82";
+constexpr const char *arrow_left = "\xe2\x86\x90";
+constexpr const char *shuffle = "\xef\x81\xb4";
+constexpr const char *wand_magic_sparkles = "\xee\x8b\x8a";
+constexpr const char *circle = "\xe2\x97\x8f";
+constexpr const char *chevron_left = "\xe2\x8c\xa9";
+constexpr const char *chevron_right = "\xe2\x8c\xaa";
+constexpr const char *chevron_down = "\xef\x81\xb8";
+constexpr const char *chevron_up = "\xef\x81\xb7";
+constexpr const char *house = "\xef\x80\x95";
+constexpr const char *bars = "\xef\x83\x89";
+constexpr const char *xmark = "\xc3\x97";
+constexpr const char *check = "\xe2\x9c\x93";
+constexpr const char *pause = "\xe2\x8f\xb8";
+constexpr const char *rotate_right = "\xef\x8b\xb9";
+constexpr const char *rotate_left = "\xef\x8b\xaa";
+constexpr const char *bolt = "\xe2\x9a\xa1";
+constexpr const char *eye = "\xef\x81\xae";
+constexpr const char *eye_slash = "\xef\x81\xb0";
+constexpr const char *shield_halved = "\xef\x8f\xad";
+constexpr const char *robot = "\xef\x95\x84";
+constexpr const char *heart = "\xe2\x99\xa5";
+constexpr const char *trophy = "\xef\x82\x91";
+constexpr const char *user = "\xef\x80\x87";
+constexpr const char *bell = "\xef\x82\xa2";
+constexpr const char *circle_notch = "\xef\x87\x8e";
+constexpr const char *list = "\xef\x80\xba";
+constexpr const char *sliders = "\xef\x87\x9e";
+constexpr const char *volume_high = "\xef\x80\xa8";
+constexpr const char *display = "\xee\x85\xa3";
+constexpr const char *gamepad = "\xef\x84\x9b";
+constexpr const char *keyboard = "\xe2\x8c\xa8";
+constexpr const char *compass = "\xef\x85\x8e";
+constexpr const char *image = "\xef\x80\xbe";
+constexpr const char *lightbulb = "\xef\x83\xab";
+constexpr const char *circle_xmark = "\xef\x81\x97";
+constexpr const char *circle_check = "\xef\x81\x98";
+constexpr const char *compact_disc = "\xef\x94\x9f";
+constexpr const char *layer_group = "\xef\x97\xbd";
+constexpr const char *forward = "\xe2\x8f\xa9";
+constexpr const char *backward = "\xe2\x8f\xaa";
+constexpr const char *floppy_disk = "\xef\x83\x87";
+constexpr const char *trash = "\xef\x87\xb8";
+constexpr const char *info = "\xef\x84\xa9";
+constexpr const char *wifi = "\xef\x87\xab";
+constexpr const char *hourglass_half = "\xef\x89\x92";
+constexpr const char *up_right_from_square = "\xef\x8d\x9d";
+constexpr const char *gauge_high = "\xef\x8f\xbd";
+constexpr const char *skull = "\xef\x95\x8c";
+constexpr const char *feather = "\xef\x94\xad";
+constexpr const char *crosshairs = "\xef\x81\x9b";
+constexpr const char *caret_left = "\xef\x83\x99";
+constexpr const char *caret_right = "\xef\x83\x9a";
+constexpr const char *circle_info = "\xef\x81\x9a";
+constexpr const char *computer_mouse = "\xef\xa3\x8c";
+constexpr const char *hand_pointer = "\xef\x89\x9a";
+constexpr const char *bullseye = "\xef\x85\x80";
+constexpr const char *fire = "\xef\x81\xad";
+constexpr const char *chart_simple = "\xee\x91\xb3";
+constexpr const char *headphones = "\xef\x80\xa5";
+constexpr const char *plus = "\x2b";
+constexpr const char *minus = "\xe2\x80\x93";
+constexpr const char *globe = "\xef\x82\xac";
+constexpr const char *folder = "\xef\x81\xbb";
+constexpr const char *arrow_down = "\xe2\x86\x93";
+constexpr const char *arrow_up = "\xe2\x86\x91";
+constexpr const char *pen = "\xef\x8c\x84";
+constexpr const char *spinner = "\xef\x84\x90";
+constexpr const char *filter = "\xef\x82\xb0";
+constexpr const char *sort = "\xef\x83\x9c";
+constexpr const char *angles_right = "\xc2\xbb";
+constexpr const char *circle_question = "\xef\x81\x99";
+constexpr const char *circle_down = "\xef\x80\x9a";
+constexpr const char *square = "\xe2\x96\xa0";
+constexpr const char *stopwatch = "\xe2\x8f\xb1";
+constexpr const char *face_smile = "\xef\x84\x98";
+}  // namespace fa
