@@ -18,10 +18,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <thread>
 #include <vector>
 
 #include "core/log.h"
+#include "core/thread.h"
 #include "platform/platform.h"
 #include "render/gl.h"
 
@@ -103,6 +103,10 @@ constexpr int kAudioPortMain = 0;
 constexpr int kAudioFormatS16Stereo = 1;
 constexpr int kUserSystem = 0xFF;
 
+#ifndef RHYTHM_PS5_KEYBOARD
+#define RHYTHM_PS5_KEYBOARD 0
+#endif
+
 }  // namespace
 
 extern "C" {
@@ -141,7 +145,10 @@ double g_nextPadRetry = 0;
 bool g_padWasConnected = false;
 uint16_t g_touchMaxX = 0, g_touchMaxY = 0;
 
-std::thread g_audioThread;
+pthread_t g_audioThread;
+bool g_audioThreadStarted = false;
+AudioCallback g_audioCb = nullptr;
+void *g_audioUser = nullptr;
 std::atomic<bool> g_audioRunning{false};
 int g_audioHandle = -1;
 int g_audioBlock = 0;
@@ -155,6 +162,7 @@ bool eglCheck(bool ok, const char *stage) {
 
 void openPad() {
     if (g_user < 0) return;
+    LOG("ps5: -> scePadOpen(user=%d)", g_user);
     g_pad = scePadOpen(g_user, 0, 0, nullptr);
     if (g_pad < 0) {
         LOG("ps5: scePadOpen a echoue: 0x%08x", static_cast<unsigned>(g_pad));
@@ -162,7 +170,9 @@ void openPad() {
     }
     LOG("ps5: manette ouverte (handle %d)", g_pad);
     const SonyPadColor color{255, 60, 160, 255};  // barre lumineuse rose : l'appli tourne
-    scePadSetLightBar(g_pad, &color);
+    LOG("ps5: -> scePadSetLightBar");
+    const int r = scePadSetLightBar(g_pad, &color);
+    LOG("ps5: <- scePadSetLightBar = 0x%08x", static_cast<unsigned>(r));
 }
 
 float stick(uint8_t v) {
@@ -170,7 +180,10 @@ float stick(uint8_t v) {
     return f < -1 ? -1 : (f > 1 ? 1 : f);
 }
 
-void audioLoop(AudioCallback cb, void *user) {
+void *audioLoop(void *) {
+    thr::logStackInfo("audio");
+    AudioCallback cb = g_audioCb;
+    void *user = g_audioUser;
     std::vector<float> mixBuffer(static_cast<size_t>(g_audioBlock) * 2);
     std::vector<int16_t> outBuffer(static_cast<size_t>(g_audioBlock) * 2);
     while (g_audioRunning.load(std::memory_order_relaxed)) {
@@ -187,26 +200,38 @@ void audioLoop(AudioCallback cb, void *user) {
             break;
         }
     }
+    return nullptr;
 }
 
 }  // namespace
 
 bool init(const InitParams &params) {
     // Services utilisateur (manette, clavier) : sans eux, scePadOpen échoue.
+    LOG("ps5: -> sceUserServiceInitialize");
     int r = sceUserServiceInitialize(nullptr);
     LOG("ps5: sceUserServiceInitialize = 0x%08x", static_cast<unsigned>(r));
     r = sceUserServiceGetInitialUser(&g_user);
     LOG("ps5: utilisateur initial = %d (0x%08x)", g_user, static_cast<unsigned>(r));
+    LOG("ps5: -> scePadInit");
     r = scePadInit();
     LOG("ps5: scePadInit = 0x%08x", static_cast<unsigned>(r));
     openPad();
+#if RHYTHM_PS5_KEYBOARD
+    // Désactivé par défaut : premier suspect du plantage du test du 13/10 (12.70).
+    LOG("ps5: -> sceKeyboardInit");
     r = sceKeyboardInit();
-    LOG("ps5: sceKeyboardInit = 0x%08x", static_cast<unsigned>(r));
+    LOG("ps5: <- sceKeyboardInit = 0x%08x", static_cast<unsigned>(r));
     {
-        int junk = 0;
-        g_keyboard = sceKeyboardOpen(g_user, 0, 0, &junk);
-        LOG("ps5: sceKeyboardOpen = %d", g_keyboard);
+        static uint8_t param[256] = {};  // taille inconnue : tampon large plutôt qu'un int
+        LOG("ps5: -> sceKeyboardOpen");
+        g_keyboard = sceKeyboardOpen(g_user, 0, 0, param);
+        LOG("ps5: <- sceKeyboardOpen = %d", g_keyboard);
     }
+#else
+    LOG("ps5: clavier USB desactive dans cette build (RHYTHM_PS5_KEYBOARD=0)");
+#endif
+    thr::logStackInfo("principal (apres entrees)");
+    LOG("ps5: -> EGL");
 
     // Vidéo : le mode d'affichage se choisit AVANT eglInitialize.
     const EGLint configAttributes[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
@@ -379,12 +404,16 @@ bool audioStart(AudioCallback cb, void *user, int framesPerBlock) {
     LOG("ps5: audio ouvert (handle %d), %d Hz, blocs de %d trames (%.2f ms)", g_audioHandle, kAudioRate, block,
         1000.0 * block / kAudioRate);
     g_audioRunning.store(true);
-    g_audioThread = std::thread(audioLoop, cb, user);
+    g_audioCb = cb;
+    g_audioUser = user;
+    g_audioThreadStarted = thr::start(g_audioThread, audioLoop, nullptr, "audio");
     return true;
 }
 
 void audioStop() {
-    if (g_audioRunning.exchange(false) && g_audioThread.joinable()) g_audioThread.join();
+    g_audioRunning.store(false);
+    if (g_audioThreadStarted) pthread_join(g_audioThread, nullptr);
+    g_audioThreadStarted = false;
     if (g_audioHandle >= 0) sceAudioOutClose(g_audioHandle);
     g_audioHandle = -1;
 }

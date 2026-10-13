@@ -23,6 +23,7 @@ set(COMMON_SOURCES
   src/core/fsprobe.cpp
   src/core/log.cpp
   src/core/netlog.cpp
+  src/core/thread.cpp
   src/render/batch.cpp
   src/render/font.cpp
   src/render/procedural.cpp

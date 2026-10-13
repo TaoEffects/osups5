@@ -10,6 +10,7 @@
 #include "core/fsprobe.h"
 #include "core/log.h"
 #include "core/netlog.h"
+#include "core/thread.h"
 #include "platform/platform.h"
 #include "version.h"
 
@@ -36,6 +37,7 @@ int main() {
         reinterpret_cast<void *>(crash::anchorAddress()));
     LOG("log fichier: %s", *logx::filePath() ? logx::filePath() : "(impossible a ouvrir)");
 
+    thr::logStackInfo("principal");
     netlog::start(kLogPort);
     if (kWaitForLogClient > 0) {
         char msg[160];
@@ -69,7 +71,9 @@ int main() {
     }
     LOG("init video ok");
 
-    App app;
+    // Sur le tas : la pile du thread principal d'un titre natif est peut-être petite.
+    App *appPtr = new App();
+    App &app = *appPtr;
     if (!app.init(probes)) {
         LOG("ECHEC init application, arret");
         plat::sleepSeconds(1.0);
@@ -86,6 +90,7 @@ int main() {
 
     LOG("sortie demandee");
     app.shutdown();
+    delete appPtr;
     netlog::stop();
     plat::requestExit();
     plat::shutdown();  // sur PS5 ne revient pas : sceSystemServiceLoadExec("exit")

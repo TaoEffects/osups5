@@ -21,6 +21,10 @@ void write(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 // Dernières lignes (les plus anciennes d'abord), pour l'écran de debug.
 std::vector<std::string> recent(size_t maxLines);
 
+// Variante pour le gestionnaire de plantage : n'attend jamais le verrou.
+// Renvoie false si le verrou était pris (l'appelant écrit alors autrement).
+bool tryWriteRaw(const char *text);
+
 // Chemin du fichier effectivement ouvert ("" si aucun).
 const char *filePath();
 

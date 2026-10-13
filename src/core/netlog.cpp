@@ -11,15 +11,17 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <thread>
 
 #include "core/log.h"
+#include "core/thread.h"
 #include "platform/platform.h"
 
 namespace netlog {
 namespace {
 
-std::thread g_thread;
+pthread_t g_thread;
+bool g_threadStarted = false;
+int g_listenFd = -1;
 std::atomic<bool> g_running{false};
 std::atomic<bool> g_connected{false};
 std::atomic<int> g_clientFd{-1};
@@ -98,7 +100,9 @@ void serveClient(int fd) {
     }
 }
 
-void serverLoop(int listenFd) {
+void *serverLoop(void *) {
+    const int listenFd = g_listenFd;
+    thr::logStackInfo("netlog");
     while (g_running.load()) {
         pollfd p{listenFd, POLLIN, 0};
         int r = poll(&p, 1, 100);
@@ -121,6 +125,7 @@ void serverLoop(int listenFd) {
         LOG("netlog: client %s deconnecte", peerName);
     }
     close(listenFd);
+    return nullptr;
 }
 
 }  // namespace
@@ -151,14 +156,16 @@ bool start(uint16_t port) {
     }
     g_port = port;
     g_running.store(true);
-    g_thread = std::thread(serverLoop, fd);
+    g_listenFd = fd;
+    g_threadStarted = thr::start(g_thread, serverLoop, nullptr, "netlog");
     LOG("netlog: en ecoute sur %s:%u (python3 tools/logrecv.py %s)", g_address, port, g_address);
     return true;
 }
 
 void stop() {
     if (!g_running.exchange(false)) return;
-    if (g_thread.joinable()) g_thread.join();
+    if (g_threadStarted) pthread_join(g_thread, nullptr);
+    g_threadStarted = false;
 }
 
 bool clientConnected() { return g_connected.load(); }

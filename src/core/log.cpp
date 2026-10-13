@@ -88,6 +88,17 @@ void write(const char *fmt, ...) {
     while (g_recent.size() > kRecentCap) g_recent.pop_front();
 }
 
+bool tryWriteRaw(const char *text) {
+    if (!g_mutex.try_lock()) return false;
+    const size_t len = strlen(text);
+    fputs(text, stdout);
+    fflush(stdout);
+    if (g_file) fputs(text, g_file);
+    appendStream(text, len);
+    g_mutex.unlock();
+    return true;
+}
+
 std::vector<std::string> recent(size_t maxLines) {
     std::lock_guard<std::mutex> lock(g_mutex);
     size_t start = g_recent.size() > maxLines ? g_recent.size() - maxLines : 0;

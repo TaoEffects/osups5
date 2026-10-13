@@ -94,7 +94,7 @@ common=(-O2 -g -fPIC -ffunction-sections -fdata-sections -fno-omit-frame-pointer
         -I"$gl_prefix/include" -I"$root/src" -I"$root/third_party/font8x8")
 sources=(
     src/main.cpp src/app/app.cpp src/audio/mixer.cpp src/audio/synth.cpp
-    src/core/crash.cpp src/core/fsprobe.cpp src/core/log.cpp src/core/netlog.cpp
+    src/core/crash.cpp src/core/fsprobe.cpp src/core/log.cpp src/core/netlog.cpp src/core/thread.cpp
     src/render/batch.cpp src/render/font.cpp src/render/procedural.cpp
     src/platform/platform_ps5.cpp third_party/font8x8/font8x8.c
 )
