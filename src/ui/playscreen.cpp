@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "app/game.h"
+#include "game/storyboard.h"
 #include "core/i18n.h"
 #include "core/fsutil.h"
 #include "core/log.h"
@@ -221,6 +222,13 @@ public:
             error_ = i18n::tr("Musique introuvable : ") + map.audioFile;
             return;
         }
+        // Storyboard : affiché par-dessus le fond, qu'on n'assombrit plus (le jeu le fait
+        // après le storyboard) ; caché s'il réutilise l'image de fond, comme osu!.
+        if (c.settings->storyboard && storyboard_.load(map.folder, map.file)) {
+            game.setBackground(0, c.settings->blurInGame ? 1 : 0, 800, Ease::OutQuint);
+            if (storyboard_.usesFile(map.background)) game.backgroundVisible = false;
+            play_.setStoryboard(&storyboard_);
+        }
         if (!play_.start(c, std::move(map), game.mods, nullptr)) error_ = "Map vide";
         started_ = true;
     }
@@ -228,6 +236,7 @@ public:
     double leave() override {
         Context &c = game.ctx;
         play_.stop(c);
+        game.backgroundVisible = true;
         c.music->setRate(game.mods.rate(), !game.mods.nightcore);
         c.music->setVolume(c.settings->musicVolume);
         game.backgroundParallax = 1;
@@ -289,6 +298,7 @@ public:
             return;
         }
         if (in.extra && play_.canSkip()) play_.skip(c);
+        storyboard_.update();
         play_.update(c, in);
         if (play_.finished() && !leaving_) {
             const game::PlayResult &r = play_.result();
@@ -375,6 +385,7 @@ private:
     }
 
     game::Play play_;
+    game::Storyboard storyboard_;
     std::string error_, key_;
     bool started_ = false, leaving_ = false, failMenu_ = false;
     int cursor_ = 0;

@@ -36,6 +36,7 @@ struct Settings {
     // Interface
     bool menuParallax = true;
     bool introEnabled = true;
+    bool storyboard = true;        // storyboards des maps en jeu
     bool originalMetadata = false;
     float uiScale = 1.0f;           // taille de l'interface (0,8 à 1,3)
     int inputMode = 0;              // 0 manette + clavier/souris, 1 manette, 2 clavier/souris

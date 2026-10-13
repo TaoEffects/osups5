@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "game/play.h"
+#include "game/storyboard.h"
 #include "core/i18n.h"
 
 #include <algorithm>
@@ -721,6 +722,12 @@ void Play::render(Context &ctx) {
         b.rect(0, 0, kVW, kVH, gfx::rgba(0, 0, 0, static_cast<uint8_t>(dim * 255)));
     }
 
+    // Storyboard (assombri comme le fond), puis les objets par-dessus.
+    if (storyboard_) {
+        storyboard_->drawBelow(b, t);
+        b.rect(0, 0, kVW, kVH, gfx::rgba(0, 0, 0, static_cast<uint8_t>(ctx.settings->backgroundDim * 255)));
+    }
+
     // Objets : du plus tardif au plus proche (les plus proches au-dessus).
     int lastVisible = static_cast<int>(firstActive_);
     while (lastVisible < static_cast<int>(map_.objects.size()) &&
@@ -934,6 +941,7 @@ void Play::render(Context &ctx) {
     }
     while (!popups_.empty() && now - popups_.front().time > 0.6) popups_.pop_front();
 
+    if (storyboard_) storyboard_->drawAbove(b, t);
     renderHud(ctx, t);
 
     // Curseur et traînée.

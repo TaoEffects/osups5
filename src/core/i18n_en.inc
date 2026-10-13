@@ -241,3 +241,4 @@
 {"archive vide", "empty archive"},
 {"retour", "back"},
 {"annule", "cancelled"},
+{"Animations des maps qui en ont (images, effets).", "Beatmap animations, for maps that have them (images, effects)."},

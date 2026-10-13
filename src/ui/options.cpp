@@ -438,6 +438,7 @@ private:
                           nullptr, nullptr});
         slider("Affichage", "Assombrissement du fond", "Assombrit l'image de fond pendant les parties pour mieux voir les cercles.",
                s.backgroundDim, 0, 1, 0.05f, [&s] { return pct(s.backgroundDim); });
+        toggle("Affichage", "Storyboards", "Animations des maps qui en ont (images, effets).", s.storyboard);
         toggle("Affichage", "Fond flou en jeu", "Floute l'image de fond pendant les parties.", s.blurInGame);
         toggle("Affichage", "Interface en jeu", "Score, précision, combo et barre de vie pendant la partie.", s.showHud);
         toggle("Affichage", "Barre d'erreur de frappe", "Affiche en bas de l'écran si tes frappes sont en avance ou en retard.",
