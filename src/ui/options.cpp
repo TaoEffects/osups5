@@ -303,10 +303,28 @@ private:
                           Kind::Choice, [&s] { return std::to_string(s.refreshHz) + " Hz"; },
                           [&s](int) { s.refreshHz = s.refreshHz == 60 ? 120 : 60; }, nullptr, nullptr});
         items_.push_back({"Affichage", "Style de jeu",
-                          "Épuré : cercles sombres à fin liseré blanc, très lisible (façon skin WhiteCat). Triangles : le "
-                          "style coloré par défaut de lazer.",
-                          Kind::Choice, [&s] { return std::string(s.skin == 0 ? "Épuré" : "Triangles"); },
-                          [&s](int) { s.skin = s.skin == 0 ? 1 : 0; }, nullptr, nullptr});
+                          "Épuré : cercles sombres à fin liseré blanc (façon WhiteCat). Triangles : le style coloré de "
+                          "lazer. Ensuite, tes skins osu! : dépose des .osk dans /data/rhythm-ps5/skins (FTP).",
+                          Kind::Choice,
+                          [this, &s] {
+                              if (s.skin == 2) return s.skinName;
+                              return std::string(s.skin == 0 ? "Épuré" : "Triangles");
+                          },
+                          [this, &s](int d) {
+                              // Liste : Épuré, Triangles, puis les skins installés.
+                              const auto &names = game.skinNames;
+                              const int n = 2 + static_cast<int>(names.size());
+                              int cur = s.skin;
+                              if (s.skin == 2) {
+                                  auto it = std::find(names.begin(), names.end(), s.skinName);
+                                  cur = it == names.end() ? 0 : 2 + static_cast<int>(it - names.begin());
+                              }
+                              cur = (cur + (d < 0 ? n - 1 : 1)) % n;
+                              s.skin = std::min(cur, 2);
+                              if (cur >= 2) s.skinName = names[static_cast<size_t>(cur - 2)];
+                              game.applySkin();
+                          },
+                          nullptr, nullptr});
         slider("Affichage", "Assombrissement du fond", "Assombrit l'image de fond pendant les parties pour mieux voir les cercles.",
                s.backgroundDim, 0, 1, 0.05f, [&s] { return pct(s.backgroundDim); });
         toggle("Affichage", "Barre d'erreur de frappe", "Affiche en bas de l'écran si tes frappes sont en avance ou en retard.",

@@ -189,8 +189,13 @@ bool Game::init() {
     {
         const size_t slash = ctx.songsDir.find_last_of('/');
         const std::string base = slash == std::string::npos ? std::string(".") : ctx.songsDir.substr(0, slash);
-        fsu::makeDirs(base + "/sons");
-        sfx_.loadOverrides(base + "/sons");
+        soundsDir_ = base + "/sons";
+        skinsDir_ = base + "/skins";
+        fsu::makeDirs(soundsDir_);
+        sfx_.loadOverrides(soundsDir_);
+        // Skins osu! déposés dans « skins » (dossiers ou archives .osk).
+        skinNames = game::scanSkins(skinsDir_);
+        applySkin();
     }
     mixer_.setMusic(&music_);
     audioOk_ = plat::audioStart(audio::Mixer::callback, &mixer_, 256);
@@ -223,6 +228,22 @@ bool Game::init() {
 #endif
     goTo(makeIntro());
     return true;
+}
+
+void Game::applySkin() {
+    skin_.unload();
+    ctx.skin = nullptr;
+    sfx_.generate();
+    sfx_.loadOverrides(soundsDir_);
+    if (settings_.skin == 2 && !settings_.skinName.empty()) {
+        const std::string dir = skinsDir_ + "/" + settings_.skinName;
+        if (skin_.load(dir, settings_.skinName)) {
+            ctx.skin = &skin_;
+            sfx_.loadOverrides(dir);
+        } else {
+            toast("Skin illisible : " + settings_.skinName);
+        }
+    }
 }
 
 void Game::shutdown() {

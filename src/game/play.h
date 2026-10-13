@@ -9,6 +9,7 @@
 
 #include "app/context.h"
 #include "game/beatmap.h"
+#include "game/skin.h"
 
 namespace game {
 
@@ -99,6 +100,11 @@ private:
     uint32_t comboColor(int index) const;
     void renderSliderBody(Context &ctx, const HitObject &o, float alpha, uint32_t color);
     void renderHud(Context &ctx, double t);
+    void renderSkinnedObject(Context &ctx, size_t i, double t, float alpha, uint32_t color);
+    void renderSkinnedCursor(Context &ctx);
+    void skinSprite(Context &ctx, const SkinSprite &sp, float cx, float cy, float scale, uint32_t color, float angle = 0) const;
+    void skinNumber(Context &ctx, int number, float cx, float cy, float scale, uint32_t color) const;
+    const Skin *skin_ = nullptr;
 
     Beatmap map_;
     Mods mods_;

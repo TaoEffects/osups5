@@ -67,6 +67,15 @@ L'appli affiche aussi une notification avec son IP et le port (9025).
 Clavier/souris (PC) : flèches + Entrée/Échap, Z/X pour frapper, souris partout, molette,
 F1 mods, F2 hasard, F3 options, Espace passer.
 
+**Skins osu!** : dépose des fichiers `.osk` (ou des dossiers de skin) dans
+`/data/rhythm-ps5/skins/` (FTP). Au lancement suivant, ils sont importés et apparaissent dans
+Options → Style de jeu (après « Épuré » et « Triangles »). Cercles, chiffres, cercle d'approche,
+sliders, bille, curseur et traînée, spinner, jugements et **sons du skin** sont pris en charge.
+
+**Performances** : le log affiche toutes les 3 s une ligne `perf:` (images/s et temps passé
+par étape) : c'est elle qu'il me faut si ça rame. L'option « Anticrénelage MSAA » (désactivée
+par défaut) peut faire chuter les FPS.
+
 **Sons personnels** : dépose des fichiers au nom des sons d'un skin osu!
 (`normal-hitnormal.wav`, `soft-hitclap.ogg`, `menuback.wav`, `click-short.wav`…) dans
 `/data/rhythm-ps5/sons/` (FTP) : ils remplacent les sons synthétisés au prochain lancement.

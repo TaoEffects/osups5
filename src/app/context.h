@@ -16,6 +16,7 @@
 
 namespace game {
 class Library;
+class Skin;
 }
 
 constexpr float kVW = 1920.0f;  // taille de l'écran virtuel
@@ -71,6 +72,7 @@ struct Context {
     Settings *settings = nullptr;
     game::Library *library = nullptr;
     gfx::ImageLoader *images = nullptr;
+    const game::Skin *skin = nullptr;  // skin osu! actif (nullptr : style intégré)
     std::string dataDir;       // dossier inscriptible (réglages, scores)
     std::string songsDir;      // dossier des maps
     double now = 0;            // horloge murale (s)

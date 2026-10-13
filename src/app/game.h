@@ -12,6 +12,7 @@
 #include "app/context.h"
 #include "game/library.h"
 #include "game/play.h"
+#include "game/skin.h"
 #include "net/mirror.h"
 #include "ui/lz.h"
 
@@ -94,6 +95,9 @@ public:
     float backgroundParallax = 1;
     bool backgroundVisible = true;
     // Éléments persistants façon lazer.
+    // Skins osu! : liste des dossiers, application du choix des options.
+    std::vector<std::string> skinNames;
+    void applySkin();
     lz::Logo logo;
     lz::Toolbar toolbar;
     bool introFlash = false;  // l'intro vient de finir : flash blanc à l'arrivée du menu
@@ -129,6 +133,8 @@ private:
     audio::SoundBank sfx_;
     Settings settings_;
     game::Library library_;
+    game::Skin skin_;
+    std::string skinsDir_, soundsDir_;
     gfx::ImageLoader images_;
     bool audioOk_ = false;
 

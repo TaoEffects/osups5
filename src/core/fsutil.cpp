@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "core/log.h"
 
@@ -115,20 +116,33 @@ bool listDir(const std::string &path, std::vector<Entry> &out) {
     }
     const int openErr = errno;
 #if defined(__FreeBSD__)
-    // Repli : lecture brute des entrées avec getdents().
-    const int fd = open(path.c_str(), O_RDONLY | O_DIRECTORY);
-    if (fd >= 0) {
-        alignas(8) char buf[16384];
+    // Repli : lecture brute des entrées avec getdents(). FreeBSD renvoie EINVAL si le
+    // tampon est plus petit qu'un bloc du système de fichiers : on essaie plusieurs
+    // tailles (16 Ko, 64 Ko, 256 Ko), avec et sans O_DIRECTORY.
+    static size_t s_size = 0;
+    const size_t sizes[] = {s_size ? s_size : 16384, 65536, 262144};
+    int lastErr = 0;
+    for (size_t attempt = 0; attempt < 6; ++attempt) {
+        const size_t size = sizes[attempt % 3];
+        const int flags = attempt < 3 ? (O_RDONLY | O_DIRECTORY) : O_RDONLY;
+        const int fd = open(path.c_str(), flags);
+        if (fd < 0) {
+            lastErr = errno;
+            continue;
+        }
+        std::vector<char> buf(size);
         bool ok = true;
+        std::vector<Entry> found;
         for (;;) {
-            const int n = getdents(fd, buf, sizeof(buf));
+            const int n = getdents(fd, buf.data(), static_cast<int>(buf.size()));
             if (n < 0) {
                 ok = false;
+                lastErr = errno;
                 break;
             }
             if (n == 0) break;
             for (int off = 0; off < n;) {
-                const dirent *e = reinterpret_cast<const dirent *>(buf + off);
+                const dirent *e = reinterpret_cast<const dirent *>(buf.data() + off);
                 if (e->d_reclen == 0) break;
                 off += e->d_reclen;
                 if (e->d_fileno == 0) continue;
@@ -136,20 +150,20 @@ bool listDir(const std::string &path, std::vector<Entry> &out) {
                 Entry entry;
                 entry.name.assign(e->d_name, e->d_namlen);
                 entry.isDir = e->d_type == DT_DIR;
-                out.push_back(entry);
+                found.push_back(entry);
             }
         }
-        const int err = errno;
         close(fd);
         if (ok) {
-            if (s_method != 1) LOG("fs: opendir refuse (errno %d), listage par getdents() ok", openErr);
+            out = std::move(found);
+            if (s_method != 1 || s_size != size)
+                LOG("fs: opendir refuse (errno %d), listage par getdents() ok (tampon %zu, essai %zu)", openErr, size, attempt);
             s_method = 1;
+            s_size = size;
             return true;
         }
-        LOG("fs: getdents(%s) a echoue errno=%d", path.c_str(), err);
-    } else {
-        LOG("fs: open(%s, O_DIRECTORY) a echoue errno=%d", path.c_str(), errno);
     }
+    LOG("fs: getdents(%s) a echoue errno=%d", path.c_str(), lastErr);
 #endif
     LOG("fs: impossible de lister %s (opendir errno %d)", path.c_str(), openErr);
     return false;

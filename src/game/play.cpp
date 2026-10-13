@@ -65,6 +65,7 @@ bool Play::start(Context &ctx, Beatmap map, const Mods &mods, const gfx::Texture
     map_ = std::move(map);
     mods_ = mods;
     background_ = background;
+    skin_ = ctx.skin && ctx.settings->skin == 2 ? ctx.skin : nullptr;
     cs_ = map_.cs;
     ar_ = map_.ar;
     od_ = map_.od;
@@ -196,6 +197,7 @@ void Play::setPaused(Context &ctx, bool paused) {
 
 uint32_t Play::comboColor(int index) const {
     if (!map_.comboColors.empty()) return map_.comboColors[static_cast<size_t>(index) % map_.comboColors.size()];
+    if (skin_ && !skin_->comboColours.empty()) return skin_->comboColours[static_cast<size_t>(index) % skin_->comboColours.size()];
     return kDefaultCombo[index % 4];
 }
 
@@ -537,9 +539,15 @@ void Play::renderSliderBody(Context &ctx, const HitObject &o, float alpha, uint3
     std::vector<Vec2> pts;
     pts.reserve(static_cast<size_t>(count));
     for (int k = 0; k < count; ++k) pts.push_back(o.positionAt(static_cast<float>(k) / static_cast<float>(count - 1)));
-    const bool flat = ctx.settings->skin == 0;
-    for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 2.0f, gfx::rgba(255, 255, 255));
-    if (flat) {
+    const bool flat = ctx.settings->skin == 0 && !skin_;
+    const uint32_t border = skin_ ? (skin_->sliderBorder | 0xFF000000u) : gfx::rgba(255, 255, 255);
+    for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 2.0f, border);
+    if (skin_) {
+        // Corps : couleur imposée par le skin ou couleur du combo, plus claire au centre.
+        const uint32_t track = skin_->hasTrackOverride ? (skin_->sliderTrackOverride | 0xFF000000u) : color;
+        for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 1.76f, scaleRgb(track, 0.55f));
+        for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 1.2f, scaleRgb(track, 0.75f));
+    } else if (flat) {
         // Épuré : corps presque noir, à peine teinté, bord blanc fin.
         const uint32_t inner = scaleRgb(color, 0.12f);
         for (const Vec2 &p : pts) b.centered(ctx.tex->disc, toScreenX(p.x), toScreenY(p.y), radius_ * 1.84f, inner);
@@ -555,6 +563,143 @@ void Play::renderSliderBody(Context &ctx, const HitObject &o, float alpha, uint3
     const uint8_t a = static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 0.92f * 255.0f);
     b.quad(sliderTarget_.color, 0, 0, kVW, kVH, gfx::rgba(a, a, a, a), 0, 0, 1, 1);
     b.setBlend(gfx::Blend::Alpha);
+}
+
+// --- Skin osu! ---------------------------------------------------------------
+// Échelles reprises d'osu!stable : un pixel d'une image 1x vaut radius/64 pour
+// les objets (128 px = diamètre), et hauteur d'écran/768 pour le curseur.
+
+void Play::skinSprite(Context &ctx, const SkinSprite &sp, float cx, float cy, float scale, uint32_t color, float angle) const {
+    if (!sp.ok()) return;
+    const float w = sp.w() * scale, h = sp.h() * scale;
+    if (angle != 0)
+        ctx.batch->rotated(sp.tex, cx, cy, w, h, angle, color);
+    else
+        ctx.batch->quad(sp.tex, cx - w / 2, cy - h / 2, w, h, color);
+}
+
+void Play::skinNumber(Context &ctx, int number, float cx, float cy, float scale, uint32_t color) const {
+    const std::string digits = std::to_string(number);
+    float total = 0;
+    for (char ch : digits) total += skin_->digits[ch - '0'].w() * scale;
+    const float overlap = static_cast<float>(skin_->hitCircleOverlap) * scale;
+    total -= overlap * static_cast<float>(digits.size() - 1);
+    float x = cx - total / 2;
+    for (char ch : digits) {
+        const SkinSprite &d = skin_->digits[ch - '0'];
+        if (!d.ok()) continue;
+        ctx.batch->quad(d.tex, x, cy - d.h() * scale / 2, d.w() * scale, d.h() * scale, color);
+        x += d.w() * scale - overlap;
+    }
+}
+
+void Play::renderSkinnedObject(Context &ctx, size_t i, double t, float alpha, uint32_t color) {
+    gfx::SpriteBatch &b = *ctx.batch;
+    const Skin &sk = *skin_;
+    const HitObject &o = map_.objects[i];
+    const State &s = state_[i];
+    const double now = ctx.now;
+    const float k = radius_ / 64.0f;  // pixels virtuels par pixel d'image 1x
+    const uint32_t white = gfx::rgba(255, 255, 255);
+
+    if (o.type == kSpinner) {
+        if (s.done && now - s.doneAt > 0.3) return;
+        const float fade = s.done ? 1 - static_cast<float>((now - s.doneAt) / 0.3) : anim::clamp01(static_cast<float>((t - o.time + 300) / 300));
+        const float cx = toScreenX(256), cy = toScreenY(192);
+        const float sp = kVH / 768.0f;
+        const float remain = anim::clamp01(static_cast<float>((o.endTime - t) / std::max(1.0, o.endTime - o.time)));
+        const uint32_t w = gfx::withAlpha(white, fade);
+        if (sk.spinnerTop.ok()) {
+            skinSprite(ctx, sk.spinnerBottom, cx, cy, sp, w, s.rotation * 0.2f);
+            skinSprite(ctx, sk.spinnerTop, cx, cy, sp, w, s.rotation * 0.5f);
+            skinSprite(ctx, sk.spinnerMiddle2, cx, cy, sp, w);
+            skinSprite(ctx, sk.spinnerMiddle, cx, cy, sp, gfx::withAlpha(gfx::rgba(255, 255, 255), fade * 0.8f));
+        } else {
+            skinSprite(ctx, sk.spinnerBackground, cx, cy, sp, w);
+            skinSprite(ctx, sk.spinnerCircle, cx, cy, sp, w, s.rotation);
+            skinSprite(ctx, sk.spinnerApproach, cx, cy, sp * (0.05f + remain), w);
+        }
+        if (s.required > 0 && std::fabs(s.rotation) / (2 * kPi) >= s.required) skinSprite(ctx, sk.spinnerClear, cx, cy - 200, sp, w);
+        else if (t < o.time + 800) skinSprite(ctx, sk.spinnerSpin, cx, cy + 200, sp, w);
+        return;
+    }
+
+    const float hx = toScreenX(o.pos.x), hy = toScreenY(o.pos.y);
+    if (o.type == kSlider) {
+        float bodyAlpha = alpha;
+        if (s.done) bodyAlpha *= 1 - anim::clamp01(static_cast<float>((now - s.doneAt) / 0.25));
+        if (mods_.hidden) bodyAlpha *= 1 - anim::clamp01(static_cast<float>((t - o.time) / std::max(1.0, o.endTime - o.time)));
+        if (bodyAlpha > 0.01f) {
+            renderSliderBody(ctx, o, bodyAlpha, color);
+            for (size_t e = s.nextEvent; e < s.events.size(); ++e) {
+                const SliderEvent &ev = s.events[e];
+                if (ev.kind != 0 || ev.span != std::max(0, static_cast<int>((t - o.time) / std::max(1.0, o.spanDuration)))) continue;
+                const Vec2 p = o.ballPosition(ev.time);
+                skinSprite(ctx, sk.sliderscorepoint, toScreenX(p.x), toScreenY(p.y), k, gfx::withAlpha(white, bodyAlpha));
+            }
+            const int spanNow = std::clamp(static_cast<int>((t - o.time) / std::max(1.0, o.spanDuration)), 0, o.slides - 1);
+            if (spanNow < o.slides - 1) {
+                const bool atEnd = spanNow % 2 == 0;
+                const Vec2 tip = o.positionAt(atEnd ? 1.0f : 0.0f);
+                const Vec2 prev = o.positionAt(atEnd ? 0.98f : 0.02f);
+                const float ang = std::atan2(prev.y - tip.y, prev.x - tip.x);
+                const float pulse = 1.0f + 0.15f * (1 - static_cast<float>(std::fmod(t, 300.0) / 300.0));
+                skinSprite(ctx, sk.reversearrow, toScreenX(tip.x), toScreenY(tip.y), k * pulse, gfx::withAlpha(white, bodyAlpha), ang);
+            }
+            if (t >= o.time && t <= o.endTime && !s.done) {
+                const Vec2 ball = o.ballPosition(t);
+                const float bx = toScreenX(ball.x), by = toScreenY(ball.y);
+                if (s.tracking) skinSprite(ctx, sk.sliderfollowcircle, bx, by, k, white);
+                if (!sk.sliderb.empty()) {
+                    const size_t frame = static_cast<size_t>((t - o.time) / 16.0) % sk.sliderb.size();
+                    const Vec2 ahead = o.ballPosition(t + 8);
+                    const float ang = std::atan2(ahead.y - ball.y, ahead.x - ball.x);
+                    skinSprite(ctx, sk.sliderb[frame], bx, by, k, white, ang);
+                }
+            }
+        }
+    }
+
+    const bool headPending = !s.headDone && !(o.type == kCircle && s.done);
+    const bool sliderHead = o.type == kSlider && sk.sliderstartcircle.ok();
+    const SkinSprite &circle = sliderHead ? sk.sliderstartcircle : sk.hitcircle;
+    const SkinSprite &overlay = sliderHead && sk.sliderstartcircleoverlay.ok() ? sk.sliderstartcircleoverlay : sk.hitcircleoverlay;
+    if (headPending && alpha > 0) {
+        skinSprite(ctx, circle, hx, hy, k, gfx::withAlpha(color, alpha));
+        if (!sk.overlayAboveNumber) skinSprite(ctx, overlay, hx, hy, k, gfx::withAlpha(white, alpha));
+        skinNumber(ctx, o.comboNumber, hx, hy, k * 0.8f, gfx::withAlpha(white, alpha));
+        if (sk.overlayAboveNumber) skinSprite(ctx, overlay, hx, hy, k, gfx::withAlpha(white, alpha));
+        if (!mods_.hidden && t < o.time) {
+            const float p = anim::clamp01(static_cast<float>((t - (o.time - preempt_)) / preempt_));
+            skinSprite(ctx, sk.approachcircle, hx, hy, k * (1.0f + 3.0f * (1.0f - p)), gfx::withAlpha(color, std::min(1.0f, alpha * 1.2f)));
+        }
+    } else {
+        // Frappe : le cercle grossit (x1,4) et s'efface en 240 ms, comme stable.
+        const int res = o.type == kCircle ? s.result : s.headResult;
+        const double at = o.type == kCircle ? s.doneAt : s.headAt;
+        const float e = static_cast<float>((now - at) / 0.24);
+        if (res > 0 && e >= 0 && e < 1) {
+            const float sc = k * (1 + 0.4f * anim::outQuint(e));
+            skinSprite(ctx, circle, hx, hy, sc, gfx::withAlpha(color, 1 - e));
+            skinSprite(ctx, overlay, hx, hy, sc, gfx::withAlpha(white, 1 - e));
+        }
+    }
+}
+
+void Play::renderSkinnedCursor(Context &ctx) {
+    const Skin &sk = *skin_;
+    const float sp = kVH / 768.0f;
+    while (trail_.size() > 10) trail_.pop_back();
+    if (sk.cursortrail.ok()) {
+        for (size_t k = trail_.size(); k-- > 1;) {
+            const float a = 1.0f - static_cast<float>(k) / static_cast<float>(trail_.size());
+            skinSprite(ctx, sk.cursortrail, trail_[k].first, trail_[k].second, sp, gfx::withAlpha(gfx::rgba(255, 255, 255), a));
+        }
+    }
+    const float grow = held_ && sk.cursorExpand ? 1.15f : 1.0f;
+    const float angle = sk.cursorRotate ? static_cast<float>(std::fmod(ctx.now, 10.0) / 10.0 * 2 * kPi) : 0;
+    skinSprite(ctx, sk.cursor, cursorX_, cursorY_, sp * grow, gfx::rgba(255, 255, 255), angle);
+    skinSprite(ctx, sk.cursormiddle, cursorX_, cursorY_, sp, gfx::rgba(255, 255, 255));
 }
 
 void Play::render(Context &ctx) {
@@ -597,6 +742,10 @@ void Play::render(Context &ctx) {
             if (out > 0 && o.type == kCircle) alpha *= 1 - anim::clamp01(out);
         }
 
+        if (skin_) {
+            renderSkinnedObject(ctx, i, t, alpha, color);
+            continue;
+        }
         if (o.type == kSpinner) {
             if (s.done && now - s.doneAt > 0.3) continue;
             const float fade = s.done ? 1 - static_cast<float>((now - s.doneAt) / 0.3) : anim::clamp01(static_cast<float>((t - o.time + 300) / 300));
@@ -751,6 +900,17 @@ void Play::render(Context &ctx) {
     for (const Popup &p : popups_) {
         const float k = static_cast<float>((now - p.time) / 0.6);
         if (k >= 1) continue;
+        if (skin_) {
+            const SkinSprite &sp = p.result == 0 ? skin_->hit0 : p.result == 100 ? skin_->hit100 : skin_->hit50;
+            if (sp.ok()) {
+                // Petit rebond puis fondu, à l'échelle de l'aire de jeu.
+                const float sc = scale_ * 0.42f * (1 + 0.15f * (1 - anim::outQuint(std::min(1.0f, k * 5))));
+                const float w = sp.w() * sc, h = sp.h() * sc;
+                b.quad(sp.tex, p.x - w / 2, p.y - h / 2 + (p.result == 0 ? k * 20 : 0), w, h,
+                       gfx::withAlpha(gfx::rgba(255, 255, 255), 1 - k * k));
+                continue;
+            }
+        }
         if (flat) {
             // Épuré : petits chiffres, croix rouge pour un raté.
             const uint32_t c = p.result == 0 ? gfx::rgba(255, 70, 80) : (p.result == 100 ? gfx::rgba(120, 230, 120) : gfx::rgba(110, 180, 255));
@@ -777,7 +937,9 @@ void Play::render(Context &ctx) {
 
     // Curseur et traînée.
     trail_.emplace_front(cursorX_, cursorY_);
-    if (flat) {
+    if (skin_ && skin_->cursor.ok()) {
+        renderSkinnedCursor(ctx);
+    } else if (flat) {
         // Traînée continue (segments arrondis qui s'amincissent), petit curseur blanc.
         while (trail_.size() > 24) trail_.pop_back();
         for (size_t k = trail_.size(); k-- > 1;) {

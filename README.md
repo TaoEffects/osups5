@@ -23,6 +23,7 @@ manette, DualSense, clavier/souris USB, téléchargement de maps via des miroirs
 | Rendu vectoriel net (formes et texte en champs de distance, MSAA) | ✅ |
 | Style de jeu épuré façon WhiteCat (ou triangles façon lazer) | ✅ |
 | Premier lancement : tutoriel et maps de base téléchargés | ✅ |
+| Skins osu! (.osk) déposés par FTP : images, couleurs et sons | ✅ (téléchargement intégré à venir) |
 | Téléchargement de maps dans l'appli (osu.direct), installation automatique | ✅ testé sur PC |
 | Manette, clavier et souris dans toute l'interface | ✅ (souris : PC seulement pour l'instant) |
 | 60 / 120 Hz (réglage dans les options) | ✅ |
@@ -30,7 +31,7 @@ manette, DualSense, clavier/souris USB, téléchargement de maps via des miroirs
 | Test sur console de l'étape 2 | ✅ (12.70) |
 | Test sur console de l'étape 3 | ⏳ voir [`docs/test-ps5.md`](docs/test-ps5.md) |
 
-À venir : skins osu! (.osk) et leur téléchargement, thèmes « classic » et « stable », étoiles
+À venir : téléchargement de skins dans l'appli, thèmes « classic » et « stable », étoiles
 calculées pour les maps importées à la main, souris et tablette USB sur PS5, recherche au
 clavier virtuel de la console.
 

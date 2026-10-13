@@ -25,7 +25,8 @@ struct Settings {
     std::string mirror = "https://osu.direct";
     bool firstRunDone = false;     // maps de base proposées au premier lancement
     bool msaa = false;             // anticrénelage MSAA x4 (peut être lent sur PS5)
-    int skin = 0;                  // style de jeu : 0 épuré (façon WhiteCat), 1 triangles (façon lazer)
+    int skin = 0;                  // style de jeu : 0 épuré (façon WhiteCat), 1 triangles (façon lazer), 2 skin osu!
+    std::string skinName;          // skin osu! choisi (dossier dans « skins »)
 
     bool load(const std::string &path);
     bool save(const std::string &path) const;
